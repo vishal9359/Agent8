@@ -1,0 +1,13 @@
+tree-sitter>=0.20.4
+tree-sitter-cpp>=0.20.0
+openai>=1.12.0
+anthropic>=0.18.0
+jsonschema>=4.20.0
+networkx>=3.2.1
+click>=8.1.7
+pyyaml>=6.0.1
+
+# Note: tree-sitter-cpp may require building from source
+# If tree-sitter-cpp import fails, install with:
+# pip install tree-sitter-cpp
+# Or clone and build from: https://github.com/tree-sitter/tree-sitter-cpp
