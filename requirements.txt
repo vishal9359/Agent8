@@ -1,13 +1,29 @@
 tree-sitter>=0.20.4
 tree-sitter-cpp>=0.20.0
-openai>=1.12.0
-anthropic>=0.18.0
 jsonschema>=4.20.0
 networkx>=3.2.1
 click>=8.1.7
 pyyaml>=6.0.1
+requests>=2.31.0
+
+# Optional: For transformers backend (Hugging Face)
+# Uncomment if using transformers backend instead of Ollama
+# torch>=2.0.0
+# transformers>=4.30.0
+# accelerate>=0.20.0
+# bitsandbytes>=0.41.0  # For 8-bit quantization (optional)
 
 # Note: tree-sitter-cpp may require building from source
 # If tree-sitter-cpp import fails, install with:
 # pip install tree-sitter-cpp
 # Or clone and build from: https://github.com/tree-sitter/tree-sitter-cpp
+
+# Note: For Ollama backend (recommended):
+# 1. Install Ollama from https://ollama.ai
+# 2. Pull a model: ollama pull llama3.2
+# 3. Run: python main.py example.cpp
+
+# Note: For transformers backend:
+# 1. Install PyTorch with CUDA support: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# 2. Install transformers: pip install transformers accelerate
+# 3. Run: python main.py example.cpp --backend transformers --model meta-llama/Llama-2-7b-chat-hf

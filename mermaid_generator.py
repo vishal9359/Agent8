@@ -1,29 +1,63 @@
 """
 LLM-based Mermaid Flowchart Generator.
-Generates Mermaid code from validated PseudoCodeModel IR.
+Generates Mermaid code from validated PseudoCodeModel IR using open-source local models.
+Supports Ollama and Hugging Face transformers.
 """
 
 from typing import Dict, Optional
 import json
 import os
+import requests
 
 
 class MermaidGenerator:
-    """LLM-based Mermaid generator."""
+    """LLM-based Mermaid generator using open-source local models."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4", use_anthropic: bool = False):
+    def __init__(self, model: str = "llama3.2", backend: str = "ollama", 
+                 ollama_base_url: str = "http://localhost:11434",
+                 device: str = "cuda"):
         """
         Initialize Mermaid generator.
         
         Args:
-            api_key: API key for LLM (OpenAI or Anthropic)
-            model: Model name (default: gpt-4)
-            use_anthropic: Use Anthropic Claude instead of OpenAI
+            model: Model name (default: llama3.2 for Ollama, or HuggingFace model path)
+            backend: Backend to use - "ollama" or "transformers" (default: ollama)
+            ollama_base_url: Ollama API base URL (default: http://localhost:11434)
+            device: Device for transformers ("cuda" or "cpu", default: cuda)
         """
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
         self.model = model
-        self.use_anthropic = use_anthropic
+        self.backend = backend.lower()
+        self.ollama_base_url = ollama_base_url
+        self.device = device
         self.temperature = 0  # Deterministic generation
+        
+        # Initialize transformers if needed
+        if self.backend == "transformers":
+            self._init_transformers()
+    
+    def _init_transformers(self):
+        """Initialize transformers backend."""
+        try:
+            import torch
+            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+            
+            self.torch = torch
+            self.AutoTokenizer = AutoTokenizer
+            self.AutoModelForCausalLM = AutoModelForCausalLM
+            self.pipeline = pipeline
+            
+            # Check if CUDA is available
+            if self.device == "cuda" and not torch.cuda.is_available():
+                print("Warning: CUDA not available, falling back to CPU")
+                self.device = "cpu"
+            
+            # Initialize pipeline as None, will be loaded on first use
+            self._pipeline = None
+        except ImportError:
+            raise ImportError(
+                "transformers library not installed. Install with: "
+                "pip install torch transformers accelerate"
+            )
     
     def generate(self, ir_model: Dict, max_retries: int = 3) -> str:
         """
@@ -43,7 +77,13 @@ class MermaidGenerator:
         
         for attempt in range(max_retries):
             try:
-                mermaid_code = self._call_llm(prompt)
+                if self.backend == "ollama":
+                    mermaid_code = self._call_ollama(prompt)
+                elif self.backend == "transformers":
+                    mermaid_code = self._call_transformers(prompt)
+                else:
+                    raise ValueError(f"Unknown backend: {self.backend}")
+                
                 return mermaid_code
             except Exception as e:
                 if attempt == max_retries - 1:
@@ -189,30 +229,26 @@ Return only Mermaid code. Do not include any explanation, reasoning, or markdown
         
         return prompt
     
-    def _call_llm(self, prompt: str) -> str:
-        """Call LLM API to generate Mermaid code."""
-        if self.use_anthropic:
-            return self._call_anthropic(prompt)
-        else:
-            return self._call_openai(prompt)
-    
-    def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI API."""
+    def _call_ollama(self, prompt: str) -> str:
+        """Call Ollama API to generate Mermaid code."""
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            # Prepare request
+            url = f"{self.ollama_base_url}/api/generate"
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": 2000
+                }
+            }
             
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a Mermaid flowchart generator. Return only valid Mermaid code."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=2000
-            )
+            response = requests.post(url, json=payload, timeout=300)
+            response.raise_for_status()
             
-            mermaid_code = response.choices[0].message.content.strip()
+            result = response.json()
+            mermaid_code = result.get("response", "").strip()
             
             # Remove markdown code blocks if present
             if mermaid_code.startswith("```"):
@@ -220,27 +256,46 @@ Return only Mermaid code. Do not include any explanation, reasoning, or markdown
                 mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
             
             return mermaid_code
-        except ImportError:
-            raise Exception("OpenAI library not installed. Install with: pip install openai")
-        except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+        except requests.exceptions.ConnectionError:
+            raise Exception(
+                f"Cannot connect to Ollama at {self.ollama_base_url}. "
+                "Make sure Ollama is running. Install from https://ollama.ai"
+            )
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Ollama API error: {str(e)}")
     
-    def _call_anthropic(self, prompt: str) -> str:
-        """Call Anthropic Claude API."""
+    def _call_transformers(self, prompt: str) -> str:
+        """Call transformers (Hugging Face) to generate Mermaid code."""
         try:
-            from anthropic import Anthropic
-            client = Anthropic(api_key=self.api_key)
+            # Initialize pipeline if not already done
+            if self._pipeline is None:
+                print(f"Loading model {self.model}... This may take a while on first run.")
+                device_map = "auto" if self.device == "cuda" else None
+                torch_dtype = self.torch.float16 if self.device == "cuda" else self.torch.float32
+                
+                self._pipeline = self.pipeline(
+                    "text-generation",
+                    model=self.model,
+                    tokenizer=self.model,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    model_kwargs={"low_cpu_mem_usage": True}
+                )
             
-            response = client.messages.create(
-                model=self.model if self.model.startswith("claude") else "claude-3-sonnet-20240229",
-                max_tokens=2000,
+            # Generate
+            system_prompt = "You are a Mermaid flowchart generator. Return only valid Mermaid code."
+            full_prompt = f"{system_prompt}\n\n{prompt}"
+            
+            outputs = self._pipeline(
+                full_prompt,
+                max_new_tokens=2000,
                 temperature=self.temperature,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                do_sample=(self.temperature > 0),
+                pad_token_id=self._pipeline.tokenizer.eos_token_id,
+                return_full_text=False
             )
             
-            mermaid_code = response.content[0].text.strip()
+            mermaid_code = outputs[0]["generated_text"].strip()
             
             # Remove markdown code blocks if present
             if mermaid_code.startswith("```"):
@@ -248,7 +303,5 @@ Return only Mermaid code. Do not include any explanation, reasoning, or markdown
                 mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
             
             return mermaid_code
-        except ImportError:
-            raise Exception("Anthropic library not installed. Install with: pip install anthropic")
         except Exception as e:
-            raise Exception(f"Anthropic API error: {str(e)}")
+            raise Exception(f"Transformers generation error: {str(e)}")

@@ -1,6 +1,7 @@
 """
 Agent C++ Function Flowchart Compiler
 Main CLI entry point for the compiler pipeline.
+Uses open-source local models (Ollama or Hugging Face transformers).
 """
 
 import click
@@ -23,21 +24,28 @@ from sub_function_expander import SubFunctionExpander
 class CompilerPipeline:
     """Compiler-style pipeline for C++ function flowchart generation."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4", 
-                 use_anthropic: bool = False):
+    def __init__(self, model: str = "llama3.2", backend: str = "ollama",
+                 ollama_base_url: str = "http://localhost:11434",
+                 device: str = "cuda"):
         """
         Initialize compiler pipeline.
         
         Args:
-            api_key: LLM API key
-            model: LLM model name
-            use_anthropic: Use Anthropic instead of OpenAI
+            model: Model name (default: llama3.2 for Ollama)
+            backend: Backend to use - "ollama" or "transformers" (default: ollama)
+            ollama_base_url: Ollama API base URL (default: http://localhost:11434)
+            device: Device for transformers ("cuda" or "cpu", default: cuda)
         """
         self.ast_parser = ASTParser()
         self.cfg_extractor = CFGExtractor()
         self.cfg_canonicalizer = CFGCanonicalizer()
         self.validator = Validator()
-        self.mermaid_generator = MermaidGenerator(api_key, model, use_anthropic)
+        self.mermaid_generator = MermaidGenerator(
+            model=model,
+            backend=backend,
+            ollama_base_url=ollama_base_url,
+            device=device
+        )
         self.complexity_calculator = ComplexityMetrics()
         self.sub_function_expander = None
     
@@ -118,7 +126,7 @@ class CompilerPipeline:
         click.echo("IR validation passed")
         
         # Step 9: Generate Mermaid using LLM
-        click.echo("Generating Mermaid flowchart using LLM...")
+        click.echo(f"Generating Mermaid flowchart using {self.mermaid_generator.backend} ({self.mermaid_generator.model})...")
         max_retries = 3
         mermaid_code = None
         
@@ -184,38 +192,46 @@ class CompilerPipeline:
 @click.option('--function', '-f', help='Function name to compile (default: first function)')
 @click.option('--sub-functions', '-s', help='Comma-separated list of sub-functions to expand')
 @click.option('--output-dir', '-o', default='output', help='Output directory (default: output)')
-@click.option('--api-key', envvar='OPENAI_API_KEY', help='OpenAI API key (or set OPENAI_API_KEY env var)')
-@click.option('--model', default='gpt-4', help='LLM model name (default: gpt-4)')
-@click.option('--anthropic', is_flag=True, help='Use Anthropic Claude instead of OpenAI')
-@click.option('--anthropic-key', envvar='ANTHROPIC_API_KEY', help='Anthropic API key (or set ANTHROPIC_API_KEY env var)')
-def main(file_path, function, sub_functions, output_dir, api_key, model, anthropic, anthropic_key):
+@click.option('--model', '-m', default='llama3.2', help='Model name (default: llama3.2 for Ollama)')
+@click.option('--backend', '-b', type=click.Choice(['ollama', 'transformers'], case_sensitive=False),
+              default='ollama', help='Backend to use: ollama or transformers (default: ollama)')
+@click.option('--ollama-url', default='http://localhost:11434',
+              help='Ollama API base URL (default: http://localhost:11434)')
+@click.option('--device', type=click.Choice(['cuda', 'cpu'], case_sensitive=False),
+              default='cuda', help='Device for transformers: cuda or cpu (default: cuda)')
+def main(file_path, function, sub_functions, output_dir, model, backend, ollama_url, device):
     """
     Agent C++ Function Flowchart Compiler
     
     Compiles C++ functions to Mermaid flowcharts using a compiler-style pipeline.
+    Uses open-source local models (Ollama or Hugging Face transformers).
     
-    Example:
+    Examples:
+        # Using Ollama (default)
+        python main.py example.cpp --function CreateVolume
+        
+        # Using Ollama with custom model
+        python main.py example.cpp --function CreateVolume --model llama3.1
+        
+        # Using Hugging Face transformers
+        python main.py example.cpp --function CreateVolume --backend transformers --model meta-llama/Llama-2-7b-chat-hf
+        
+        # With sub-function expansion
         python main.py example.cpp --function CreateVolume --sub-functions AllocateSpace,UpdateMetadata
     """
     try:
-        # Determine API key
-        if anthropic:
-            api_key = anthropic_key or api_key
-            if not api_key:
-                click.echo("Error: Anthropic API key required. Set ANTHROPIC_API_KEY env var or use --anthropic-key", err=True)
-                sys.exit(1)
-        else:
-            if not api_key:
-                click.echo("Error: OpenAI API key required. Set OPENAI_API_KEY env var or use --api-key", err=True)
-                sys.exit(1)
-        
         # Parse sub-functions
         sub_func_list = None
         if sub_functions:
             sub_func_list = [f.strip() for f in sub_functions.split(',')]
         
         # Initialize pipeline
-        pipeline = CompilerPipeline(api_key, model, anthropic)
+        pipeline = CompilerPipeline(
+            model=model,
+            backend=backend,
+            ollama_base_url=ollama_url,
+            device=device
+        )
         
         # Compile
         result = pipeline.compile(

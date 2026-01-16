@@ -1,6 +1,6 @@
 # Agent C++ Function Flowchart Compiler
 
-A compiler-style static analysis tool that converts C++ functions into Mermaid flowcharts using a validated pseudo-code intermediate model and LLM-powered generation.
+A compiler-style static analysis tool that converts C++ functions into Mermaid flowcharts using a validated pseudo-code intermediate model and open-source LLM-powered generation.
 
 ## Overview
 
@@ -17,7 +17,7 @@ Structured Pseudo Code Model (JSON IR)
     ↓
 Validation Gate (Retry if invalid)
     ↓
-LLM-based Mermaid Flowchart Generator
+LLM-based Mermaid Flowchart Generator (Open-Source)
     ↓
 Validation Gate (Retry if invalid)
     ↓
@@ -30,7 +30,8 @@ Mermaid Output + JSON IR + Complexity Metrics
 - **CFG Canonicalization**: Normalizes control flow graphs before IR generation
 - **PseudoCodeModel IR**: LLM-optimized JSON intermediate representation
 - **Validation Gates**: Comprehensive validation at IR and Mermaid stages
-- **LLM-Powered Generation**: Uses GPT-4 or Claude to generate Mermaid flowcharts
+- **Open-Source LLM**: Uses local models via Ollama or Hugging Face transformers (no API keys required)
+- **GPU Support**: Optimized for 64GB GPU servers with CUDA support
 - **Complexity Metrics**: Calculates cyclomatic complexity and other metrics
 - **Sub-Function Expansion**: Optionally expands allowed sub-functions
 
@@ -51,9 +52,51 @@ Mermaid Output + JSON IR + Complexity Metrics
    - Ensure all paths reach End unless infinite loop exists
 4. **IR Generation**: Converts canonicalized CFG to PseudoCodeModel JSON IR
 5. **IR Validation**: Validates IR structure, connectivity, and correctness
-6. **Mermaid Generation**: Uses LLM to generate Mermaid flowchart from validated IR
+6. **Mermaid Generation**: Uses open-source LLM to generate Mermaid flowchart from validated IR
 7. **Mermaid Validation**: Validates Mermaid syntax and control flow
 8. **Metrics Calculation**: Computes complexity metrics
+
+### LLM Backends
+
+The compiler supports two open-source backends:
+
+#### 1. Ollama (Recommended - Default)
+
+Ollama is the easiest way to run local LLMs. It handles model management and inference automatically.
+
+**Advantages:**
+- Easy setup and model management
+- Automatic GPU utilization
+- No complex dependencies
+- Supports many models (Llama, Mistral, CodeLlama, etc.)
+
+**Setup:**
+```bash
+# Install Ollama from https://ollama.ai
+# Pull a model (recommended for code generation)
+ollama pull llama3.2
+# Or for larger models on 64GB GPU
+ollama pull llama3.1:70b
+```
+
+#### 2. Hugging Face Transformers
+
+Direct integration with Hugging Face models for maximum control.
+
+**Advantages:**
+- Direct access to Hugging Face model hub
+- Full control over model loading and inference
+- Supports quantization and optimization
+- Best for custom models
+
+**Setup:**
+```bash
+# Install PyTorch with CUDA support
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+# Install transformers
+pip install transformers accelerate
+```
 
 ### PseudoCodeModel IR
 
@@ -152,33 +195,94 @@ The compiler calculates:
 
 ## Installation
 
+### Prerequisites
+
+- Python 3.8+
+- CUDA-capable GPU (recommended for 64GB GPU server)
+- Ollama (for Ollama backend) OR PyTorch with CUDA (for transformers backend)
+
+### Step 1: Clone Repository
+
 ```bash
-# Clone the repository
 git clone https://github.com/vishal9359/Agent8.git
 cd Agent8
+```
 
-# Install dependencies
+### Step 2: Install Python Dependencies
+
+```bash
 pip install -r requirements.txt
+```
+
+### Step 3: Setup LLM Backend
+
+#### Option A: Ollama (Recommended)
+
+```bash
+# Install Ollama from https://ollama.ai
+# For Linux/Mac:
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# For Windows: Download from https://ollama.ai/download
+
+# Pull a model (recommended models for code generation)
+ollama pull llama3.2        # ~2GB, fast, good quality
+ollama pull codellama       # Code-specific model
+ollama pull llama3.1:70b    # Larger model for 64GB GPU
+```
+
+#### Option B: Hugging Face Transformers
+
+```bash
+# Install PyTorch with CUDA support
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+# Install transformers
+pip install transformers accelerate
+
+# Optional: For 8-bit quantization (saves memory)
+pip install bitsandbytes
 ```
 
 ## Usage
 
-### Basic Usage
+### Basic Usage (Ollama - Default)
 
 ```bash
+# Make sure Ollama is running
+ollama serve
+
+# In another terminal, compile a function
 python main.py example.cpp --function CreateVolume
+```
+
+### Using Different Models
+
+```bash
+# Use a different Ollama model
+python main.py example.cpp --function CreateVolume --model codellama
+
+# Use transformers backend
+python main.py example.cpp --function CreateVolume \
+    --backend transformers \
+    --model meta-llama/Llama-2-7b-chat-hf
 ```
 
 ### With Sub-Function Expansion
 
 ```bash
-python main.py example.cpp --function CreateVolume --sub-functions AllocateSpace,UpdateMetadata
+python main.py example.cpp \
+    --function CreateVolume \
+    --sub-functions AllocateSpace,UpdateMetadata
 ```
 
-### Using Anthropic Claude
+### Custom Ollama URL
 
 ```bash
-python main.py example.cpp --function CreateVolume --anthropic --anthropic-key YOUR_KEY
+# If Ollama is running on a different host/port
+python main.py example.cpp \
+    --function CreateVolume \
+    --ollama-url http://192.168.1.100:11434
 ```
 
 ### Command-Line Options
@@ -188,11 +292,27 @@ Options:
   -f, --function TEXT        Function name to compile (default: first function)
   -s, --sub-functions TEXT   Comma-separated list of sub-functions to expand
   -o, --output-dir TEXT      Output directory (default: output)
-  --api-key TEXT             OpenAI API key (or set OPENAI_API_KEY env var)
-  --model TEXT               LLM model name (default: gpt-4)
-  --anthropic                Use Anthropic Claude instead of OpenAI
-  --anthropic-key TEXT       Anthropic API key (or set ANTHROPIC_API_KEY env var)
+  -m, --model TEXT           Model name (default: llama3.2 for Ollama)
+  -b, --backend [ollama|transformers]
+                             Backend to use (default: ollama)
+  --ollama-url TEXT          Ollama API base URL (default: http://localhost:11434)
+  --device [cuda|cpu]        Device for transformers (default: cuda)
 ```
+
+## Recommended Models for 64GB GPU
+
+### Ollama Models
+
+- **llama3.1:70b** - Best quality, requires ~40GB VRAM
+- **llama3.2:3b** - Fast, good quality, ~2GB VRAM
+- **codellama:34b** - Code-specific, ~20GB VRAM
+- **mistral:7b** - Balanced quality/speed, ~4GB VRAM
+
+### Hugging Face Models
+
+- **meta-llama/Llama-2-70b-chat-hf** - High quality
+- **codellama/CodeLlama-34b-Instruct-hf** - Code-specific
+- **mistralai/Mistral-7B-Instruct-v0.2** - Fast and efficient
 
 ## Example
 
@@ -221,7 +341,7 @@ The compiler will:
 3. Canonicalize CFG
 4. Generate IR
 5. Validate IR
-6. Generate Mermaid flowchart
+6. Generate Mermaid flowchart using local LLM
 7. Validate Mermaid
 8. Calculate metrics
 9. Write outputs to `output/` directory
@@ -280,6 +400,7 @@ flowchart TD
 4. **Retry Mechanism**: Automatic retry on validation failures
 5. **LLM-Optimized IR**: JSON structure designed for LLM understanding
 6. **Compiler-Style Architecture**: Clear pipeline with intermediate representations
+7. **No API Keys Required**: Fully open-source, runs entirely locally
 
 ## Error Handling
 
@@ -293,6 +414,32 @@ The compiler classifies errors:
 
 All errors trigger retry mechanisms with the same prompt and IR.
 
+## Troubleshooting
+
+### Ollama Connection Error
+
+```
+Error: Cannot connect to Ollama at http://localhost:11434
+```
+
+**Solution:**
+1. Make sure Ollama is running: `ollama serve`
+2. Check if the model is pulled: `ollama list`
+3. Verify the URL: `--ollama-url http://localhost:11434`
+
+### CUDA Out of Memory (Transformers)
+
+**Solution:**
+1. Use a smaller model
+2. Enable 8-bit quantization: Install `bitsandbytes` and use `--device cpu` temporarily
+3. Use Ollama instead (handles memory better)
+
+### Model Not Found
+
+**Solution:**
+- For Ollama: `ollama pull <model-name>`
+- For Transformers: Check model name on Hugging Face Hub
+
 ## Sub-Function Expansion
 
 Sub-function expansion allows inlining of specified functions:
@@ -303,6 +450,14 @@ Sub-function expansion allows inlining of specified functions:
 - All other function calls remain atomic nodes
 - No caller tracing or project crawling
 
+## Performance Tips for 64GB GPU
+
+1. **Use Ollama**: Better memory management and GPU utilization
+2. **Use Larger Models**: With 64GB GPU, use 70B models for better quality
+3. **Batch Processing**: Process multiple functions in sequence
+4. **Model Caching**: Ollama caches models automatically
+5. **CUDA Optimization**: Ensure CUDA drivers are up to date
+
 ## Contributing
 
 Contributions are welcome! Please ensure:
@@ -311,6 +466,7 @@ Contributions are welcome! Please ensure:
 - All validation gates are maintained
 - Deterministic processing is preserved
 - Tests are added for new features
+- Documentation is updated
 
 ## License
 
