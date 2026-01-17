@@ -277,6 +277,12 @@ python main.py aio.cpp --function AioCompletion::_SendUserCompletion
 
 # Or just the method name (will match any class)
 python main.py aio.cpp --function _SendUserCompletion
+
+# Windows paths (backslashes are automatically handled)
+python main.py D:\git-project\poseidonos\src\io\frontend_io\aio.cpp --function _SendUserCompletion
+
+# Or use forward slashes (also works on Windows)
+python main.py D:/git-project/poseidonos/src/io/frontend_io/aio.cpp --function _SendUserCompletion
 ```
 
 ### Using Different Models
