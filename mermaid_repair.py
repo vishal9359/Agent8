@@ -60,11 +60,11 @@ class MermaidRepair:
     
     def _ensure_start_end_nodes(self, code: str) -> str:
         """Ensure Start and End nodes exist."""
-        lines = code.split("\n")
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
         has_start = False
         has_end = False
-        start_node_id = None
-        end_node_id = None
+        start_node_id = "S1"
+        end_node_id = "E1"
         
         # Find existing Start/End nodes
         for line in lines:
@@ -79,44 +79,50 @@ class MermaidRepair:
                 if match:
                     end_node_id = match.group(1)
         
+        new_lines = []
+        flowchart_found = False
+        
         # Add Start node if missing
         if not has_start:
-            if not start_node_id:
-                start_node_id = "S1"
             # Find first node that's not Start/End to connect from
             first_node = self._find_first_node(lines)
             start_line = f"{start_node_id}([Start])"
-            if start_line not in code:
-                # Insert after flowchart TD line
-                new_lines = []
-                for i, line in enumerate(lines):
-                    new_lines.append(line)
-                    if i == 0 and line.strip().startswith("flowchart"):
-                        new_lines.append(start_line)
-                        if first_node:
+            
+            for i, line in enumerate(lines):
+                new_lines.append(line)
+                # Insert Start after flowchart declaration
+                if not flowchart_found and line.strip().startswith("flowchart"):
+                    flowchart_found = True
+                    new_lines.append(start_line)
+                    if first_node:
+                        # Check if edge already exists
+                        edge_exists = any(f"{start_node_id} -->" in l for l in lines)
+                        if not edge_exists:
                             new_lines.append(f"{start_node_id} --> {first_node}")
-                lines = new_lines
-                has_start = True
+                    else:
+                        # No first node, connect Start to End
+                        new_lines.append(f"{start_node_id} --> {end_node_id}")
+        else:
+            new_lines = list(lines)
         
         # Add End node if missing
         if not has_end:
-            if not end_node_id:
-                end_node_id = "E1"
-            # Find nodes that should connect to End (returns, final processes)
             end_line = f"{end_node_id}([End])"
-            if end_line not in code:
-                # Find nodes that need to connect to End
-                nodes_to_end = self._find_nodes_needing_end(lines)
-                new_lines = list(lines)
+            # Find nodes that should connect to End (returns, final processes)
+            nodes_to_end = self._find_nodes_needing_end(new_lines)
+            
+            # Add End node
+            if end_line not in "\n".join(new_lines):
                 new_lines.append(end_line)
-                for node_id in nodes_to_end:
-                    edge = f"{node_id} --> {end_node_id}"
-                    if edge not in code:
-                        new_lines.append(edge)
-                lines = new_lines
-                has_end = True
+            
+            # Connect nodes to End
+            for node_id in nodes_to_end:
+                edge = f"{node_id} --> {end_node_id}"
+                edge_exists = any(edge in l or f"{node_id} -->" in l for l in new_lines)
+                if not edge_exists:
+                    new_lines.append(edge)
         
-        return "\n".join(lines)
+        return "\n".join(new_lines)
     
     def _find_first_node(self, lines: List[str]) -> Optional[str]:
         """Find the first node in the flowchart (excluding Start/End)."""
@@ -134,20 +140,26 @@ class MermaidRepair:
         nodes_to_end = []
         all_nodes = set()
         nodes_with_outgoing = set()
+        nodes_with_incoming = set()
         
-        # Collect all nodes and their outgoing edges
+        # Collect all nodes and their edges
         for line in lines:
             # Find node declarations
             node_match = re.search(r'([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
             if node_match:
-                all_nodes.add(node_match.group(1))
+                node_id = node_match.group(1)
+                if not re.search(r'Start|End', line, re.IGNORECASE):
+                    all_nodes.add(node_id)
             
             # Find edges: node1 --> node2
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->', line)
+            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)', line)
             if edge_match:
-                nodes_with_outgoing.add(edge_match.group(1))
+                from_node = edge_match.group(1)
+                to_node = edge_match.group(2)
+                nodes_with_outgoing.add(from_node)
+                nodes_with_incoming.add(to_node)
         
-        # Find return nodes
+        # Find return nodes (highest priority)
         for line in lines:
             if re.search(r'\(\[return', line, re.IGNORECASE):
                 match = re.search(r'([A-Za-z0-9_]+)\(\[return', line, re.IGNORECASE)
@@ -157,11 +169,25 @@ class MermaidRepair:
         # Find nodes without outgoing edges (except Start/End)
         for node in all_nodes:
             if (node not in nodes_with_outgoing and 
-                not re.search(r'Start|End', node, re.IGNORECASE) and
                 node not in nodes_to_end):
                 nodes_to_end.append(node)
         
-        return nodes_to_end if nodes_to_end else list(all_nodes - nodes_with_outgoing)[:1]
+        # If no nodes found, use the last process node
+        if not nodes_to_end and all_nodes:
+            # Get process nodes (not decisions, not returns)
+            process_nodes = []
+            for line in lines:
+                if re.search(r'\[', line) and not re.search(r'return|Start|End', line, re.IGNORECASE):
+                    match = re.search(r'([A-Za-z0-9_]+)\[', line)
+                    if match:
+                        process_nodes.append(match.group(1))
+            if process_nodes:
+                nodes_to_end.append(process_nodes[-1])
+            else:
+                # Fallback: use any node
+                nodes_to_end.append(list(all_nodes)[0] if all_nodes else "S1")
+        
+        return nodes_to_end
     
     def _fix_decision_branches(self, code: str) -> str:
         """Fix decision nodes missing Yes/No branches."""
