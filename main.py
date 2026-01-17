@@ -71,7 +71,16 @@ class CompilerPipeline:
         # Step 2: Find function
         function_node = self.ast_parser.find_function(ast_data, function_name)
         if not function_node:
-            raise ValueError(f"Function '{function_name}' not found in {file_path}")
+            # List available functions for better error message
+            available_functions = self.ast_parser.list_functions(ast_data)
+            error_msg = f"Function '{function_name}' not found in {file_path}"
+            if available_functions:
+                error_msg += f"\n\nAvailable functions in this file:\n"
+                for func in available_functions[:20]:  # Limit to first 20
+                    error_msg += f"  - {func}\n"
+                if len(available_functions) > 20:
+                    error_msg += f"  ... and {len(available_functions) - 20} more\n"
+            raise ValueError(error_msg)
         
         func_name = function_node["name"]
         click.echo(f"Found function: {func_name}")

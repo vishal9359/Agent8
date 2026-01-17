@@ -109,25 +109,35 @@ class ASTParser:
             
             # Extract identifier - could be field_identifier for member functions
             func_name = None
+            qualified_class = None
             
-            # Check for field_identifier (member functions)
+            # Check for qualified_identifier first (for out-of-class definitions like Class::Method)
             for child in func_declarator.children:
-                if child.type == 'field_identifier':
+                if child.type == 'qualified_identifier':
+                    # Handle qualified identifiers like AioCompletion::_SendUserCompletion
+                    # Structure: qualified_identifier -> [type_identifier, ::, field_identifier]
+                    children_list = list(child.children)
+                    # Find class name (type_identifier) and function name (field_identifier)
+                    for i, subchild in enumerate(children_list):
+                        if subchild.type == 'type_identifier':
+                            qualified_class = source_str[subchild.start_byte:subchild.end_byte]
+                        elif subchild.type == 'field_identifier':
+                            func_name = source_str[subchild.start_byte:subchild.end_byte]
+                        elif subchild.type == 'identifier' and not func_name:
+                            # Fallback: might be just an identifier in qualified context
+                            func_name = source_str[subchild.start_byte:subchild.end_byte]
+                    break
+                elif child.type == 'field_identifier':
                     func_name = source_str[child.start_byte:child.end_byte]
                     break
-                elif child.type == 'qualified_identifier':
-                    # Handle qualified identifiers
-                    for subchild in child.children:
-                        if subchild.type == 'field_identifier':
-                            func_name = source_str[subchild.start_byte:subchild.end_byte]
-                            break
-                    if func_name:
-                        break
                 elif child.type == 'identifier':
                     func_name = source_str[child.start_byte:child.end_byte]
                     break
             
-            return func_name, class_context
+            # Use qualified class if found, otherwise use context
+            final_class = qualified_class if qualified_class else class_context
+            
+            return func_name, final_class
         
         def traverse(node, class_context=None, require_class_match=True):
             """Traverse AST to find function definitions.
@@ -207,6 +217,77 @@ class ASTParser:
             result = traverse(root_node, class_context=None, require_class_match=False)
         
         return result
+    
+    def list_functions(self, ast_data: dict) -> list:
+        """
+        List all functions in the AST.
+        
+        Args:
+            ast_data: AST data from parse_file or parse_string
+            
+        Returns:
+            List of function names (with class prefix if applicable)
+        """
+        tree = ast_data['tree']
+        source = ast_data['source']
+        root_node = tree.root_node
+        functions = []
+        
+        def extract_function_name(node, source_str, class_context=None):
+            """Extract function name from function_definition node."""
+            func_declarator = None
+            for child in node.children:
+                if child.type == 'function_declarator':
+                    func_declarator = child
+                    break
+            
+            if not func_declarator:
+                return None, None
+            
+            func_name = None
+            qualified_class = None
+            
+            for child in func_declarator.children:
+                if child.type == 'qualified_identifier':
+                    children_list = list(child.children)
+                    for subchild in children_list:
+                        if subchild.type == 'type_identifier':
+                            qualified_class = source_str[subchild.start_byte:subchild.end_byte]
+                        elif subchild.type == 'field_identifier':
+                            func_name = source_str[subchild.start_byte:subchild.end_byte]
+                        elif subchild.type == 'identifier' and not func_name:
+                            func_name = source_str[subchild.start_byte:subchild.end_byte]
+                    break
+                elif child.type == 'field_identifier':
+                    func_name = source_str[child.start_byte:child.end_byte]
+                    break
+                elif child.type == 'identifier':
+                    func_name = source_str[child.start_byte:child.end_byte]
+                    break
+            
+            final_class = qualified_class if qualified_class else class_context
+            return func_name, final_class
+        
+        def traverse(node, class_context=None):
+            """Traverse AST to find all function definitions."""
+            current_class = class_context
+            if node.type == 'class_specifier':
+                for child in node.children:
+                    if child.type == 'type_identifier':
+                        current_class = source[child.start_byte:child.end_byte]
+                        break
+            
+            if node.type == 'function_definition':
+                func_name, class_name = extract_function_name(node, source, current_class)
+                if func_name:
+                    full_name = f"{class_name}::{func_name}" if class_name else func_name
+                    functions.append(full_name)
+            
+            for child in node.children:
+                traverse(child, current_class)
+        
+        traverse(root_node)
+        return functions
     
     def get_function_body(self, function_node: dict, source: str) -> dict:
         """
