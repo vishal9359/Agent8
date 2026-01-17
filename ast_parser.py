@@ -95,7 +95,7 @@ class ASTParser:
         else:
             target_method = function_name
         
-        def extract_function_name(node, source_str):
+        def extract_function_name(node, source_str, class_context=None):
             """Extract function name from function_definition node."""
             # Look for function_declarator
             func_declarator = None
@@ -108,53 +108,52 @@ class ASTParser:
                 return None, None
             
             # Extract identifier - could be field_identifier for member functions
-            func_name_node = None
             func_name = None
-            class_name = None
             
             # Check for field_identifier (member functions)
             for child in func_declarator.children:
                 if child.type == 'field_identifier':
-                    func_name_node = child
                     func_name = source_str[child.start_byte:child.end_byte]
                     break
                 elif child.type == 'qualified_identifier':
                     # Handle qualified identifiers
                     for subchild in child.children:
                         if subchild.type == 'field_identifier':
-                            func_name_node = subchild
                             func_name = source_str[subchild.start_byte:subchild.end_byte]
                             break
+                    if func_name:
+                        break
                 elif child.type == 'identifier':
-                    func_name_node = child
                     func_name = source_str[child.start_byte:child.end_byte]
                     break
             
-            # Find containing class name
-            current = node.parent
-            while current:
-                if current.type == 'class_specifier':
-                    # Find class name
-                    for child in current.children:
-                        if child.type == 'type_identifier':
-                            class_name = source_str[child.start_byte:child.end_byte]
-                            break
-                    break
-                current = current.parent
-            
-            return func_name, class_name
+            return func_name, class_context
         
-        def traverse(node, require_class_match=True):
+        def traverse(node, class_context=None, require_class_match=True):
             """Traverse AST to find function definitions.
             
             Args:
                 node: AST node to traverse
+                class_context: Current class name context (tracked during traversal)
                 require_class_match: If True, require class name match for fully qualified names
             """
+            # Update class context if we enter a class definition
+            current_class = class_context
+            if node.type == 'class_specifier':
+                # Extract class name
+                for child in node.children:
+                    if child.type == 'type_identifier':
+                        current_class = source[child.start_byte:child.end_byte]
+                        break
+            
             if node.type == 'function_definition':
-                func_name, class_name = extract_function_name(node, source)
+                func_name, class_name = extract_function_name(node, source, current_class)
                 
                 if func_name:
+                    # Use tracked class context if available
+                    if not class_name:
+                        class_name = current_class
+                    
                     # Check if this matches the target
                     if function_name is None:
                         # No target specified, return first function
@@ -194,18 +193,18 @@ class ASTParser:
                             }
             
             for child in node.children:
-                result = traverse(child, require_class_match)
+                result = traverse(child, current_class, require_class_match)
                 if result:
                     return result
             
             return None
         
         # First try with exact class match
-        result = traverse(root_node, require_class_match=True)
+        result = traverse(root_node, class_context=None, require_class_match=True)
         
         # If not found with fully qualified name, try matching just the method name as fallback
         if not result and target_class and target_method:
-            result = traverse(root_node, require_class_match=False)
+            result = traverse(root_node, class_context=None, require_class_match=False)
         
         return result
     
