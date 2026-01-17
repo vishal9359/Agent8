@@ -268,52 +268,65 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
         # Handle Windows paths - the path might have backslashes that need proper handling
         import os
         
-        # First, try to normalize using os.path which handles Windows paths better
+        # Debug: log the received path
+        original_path = file_path
+        
+        # Remove quotes if present (user might have quoted the path)
+        file_path = file_path.strip('"\'')
+        
+        # Normalize using os.path which handles Windows paths correctly
         normalized_path = os.path.normpath(file_path)
         
         # Try multiple path resolution strategies
         path_candidates = [
             normalized_path,
             os.path.abspath(normalized_path),
-            str(Path(normalized_path).resolve()) if Path(normalized_path).exists() else normalized_path,
-            file_path,  # Original path
+            file_path,  # Original (after quote removal)
+            original_path,  # Very original
         ]
+        
+        # Try to resolve if path exists
+        for candidate in path_candidates[:2]:  # Only try normalized and absolute
+            try:
+                if Path(candidate).exists():
+                    resolved = Path(candidate).resolve()
+                    if resolved.exists():
+                        path_candidates.insert(0, str(resolved))
+                        break
+            except (OSError, ValueError):
+                continue
         
         # Remove duplicates while preserving order
         seen = set()
-        path_candidates = [p for p in path_candidates if p not in seen and not seen.add(p)]
+        path_candidates = [p for p in path_candidates if p and p not in seen and not seen.add(p)]
         
         # Find the first path that exists
-        file_path = None
+        resolved_path = None
         for candidate in path_candidates:
             try:
                 path_obj = Path(candidate)
                 if path_obj.exists() and path_obj.is_file():
-                    file_path = str(path_obj.resolve())
+                    resolved_path = str(path_obj.resolve())
                     break
-            except (OSError, ValueError):
+            except (OSError, ValueError, RuntimeError) as e:
                 continue
         
-        # If still not found, try one more time with raw string handling
-        if not file_path:
-            # Handle case where backslashes might have been stripped
-            # Reconstruct path if it looks like backslashes were removed
-            if '\\' not in normalized_path and len(normalized_path.split('/')) == 1:
-                # Might be a mangled path, try to reconstruct
-                # This is a fallback for edge cases
-                pass
-            
-            # Final attempt with the original normalized path
-            final_path = Path(normalized_path)
-            if final_path.exists() and final_path.is_file():
-                file_path = str(final_path.resolve())
-        
-        if not file_path:
-            click.echo(f"Error: File not found: {file_path or normalized_path}", err=True)
-            click.echo(f"  Original path: {repr(file_path)}", err=True)
-            click.echo(f"  Normalized: {normalized_path}", err=True)
-            click.echo(f"  Current directory: {os.getcwd()}", err=True)
+        if not resolved_path:
+            # Last attempt: try to fix if backslashes were stripped
+            # Check if path looks mangled (no separators but has drive letter)
+            if ':' in normalized_path and (os.sep not in normalized_path and '/' not in normalized_path and '\\' not in normalized_path):
+                click.echo(f"Error: Path appears to be malformed. Backslashes may have been stripped.", err=True)
+                click.echo(f"  Received: {repr(original_path)}", err=True)
+                click.echo(f"  Try quoting the path: python main.py \"{original_path}\" --function ...", err=True)
+            else:
+                click.echo(f"Error: File not found: {normalized_path}", err=True)
+                click.echo(f"  Original path received: {repr(original_path)}", err=True)
+                click.echo(f"  Normalized path: {normalized_path}", err=True)
+                click.echo(f"  Current directory: {os.getcwd()}", err=True)
+                click.echo(f"  Tried {len(path_candidates)} path variations", err=True)
             sys.exit(1)
+        
+        file_path = resolved_path
         
         # Verify it's actually a file
         if not Path(file_path).is_file():
