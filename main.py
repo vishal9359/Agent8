@@ -17,6 +17,7 @@ from cfg_canonicalizer import CFGCanonicalizer
 from pseudo_code_model import PseudoCodeModel
 from validator import Validator
 from mermaid_generator import MermaidGenerator
+from mermaid_repair import MermaidRepair
 from complexity_metrics import ComplexityMetrics
 from sub_function_expander import SubFunctionExpander
 
@@ -46,6 +47,7 @@ class CompilerPipeline:
             ollama_base_url=ollama_base_url,
             device=device
         )
+        self.mermaid_repair = MermaidRepair()
         self.complexity_calculator = ComplexityMetrics()
         self.sub_function_expander = None
     
@@ -151,6 +153,11 @@ class CompilerPipeline:
                     max_retries=1
                 )
                 
+                # Try to repair common issues automatically
+                if attempt > 1 or validation_errors:  # Repair on retries or if we had errors
+                    click.echo("  Applying automatic repairs...")
+                    mermaid_code = self.mermaid_repair.repair(mermaid_code)
+                
                 # Validate Mermaid
                 is_valid, errors = self.validator.validate_mermaid(mermaid_code)
                 if is_valid:
@@ -162,13 +169,21 @@ class CompilerPipeline:
                     click.echo(f"  Errors: {', '.join(errors[:3])}{'...' if len(errors) > 3 else ''}", err=True)
                     
                     if attempt < max_retries:
-                        click.echo(f"  Retrying with improved prompt...", err=True)
+                        click.echo(f"  Retrying with improved prompt and repairs...", err=True)
                     else:
-                        # Last attempt failed - show all errors
+                        # Last attempt - try one more repair pass
+                        click.echo("  Applying final repair pass...")
+                        mermaid_code = self.mermaid_repair.repair(mermaid_code)
+                        is_valid, errors = self.validator.validate_mermaid(mermaid_code)
+                        if is_valid:
+                            click.echo("✓ Mermaid validation passed after final repair")
+                            break
+                        
+                        # Still failed - show all errors
                         click.echo(f"\nAll validation errors:", err=True)
                         for i, error in enumerate(errors, 1):
                             click.echo(f"  {i}. {error}", err=True)
-                        raise ValueError(f"Mermaid validation failed after {max_retries} attempts")
+                        raise ValueError(f"Mermaid validation failed after {max_retries} attempts and repairs")
                         
             except ValueError:
                 # Re-raise validation errors

@@ -55,7 +55,8 @@ Mermaid Output + JSON IR + Complexity Metrics
 6. **Mermaid Generation**: Uses open-source LLM to generate Mermaid flowchart from validated IR
 7. **Mermaid Validation**: Validates Mermaid syntax and control flow
 8. **Intelligent Retry**: On validation failure, regenerates with improved prompts including specific error feedback
-9. **Metrics Calculation**: Computes complexity metrics
+9. **Automatic Repair**: Automatically fixes common Mermaid issues (missing Start/End nodes, decision branches, etc.)
+10. **Metrics Calculation**: Computes complexity metrics
 
 ### LLM Backends
 
@@ -188,6 +189,14 @@ The Intermediate Representation (IR) is a JSON structure optimized for LLM under
 - Up to 5 retry attempts with progressively better prompts
 - Each retry includes specific error messages to guide correction
 - Focuses on common issues like missing decision branches
+
+**Automatic Mermaid Repair:**
+- Automatically fixes common issues in generated Mermaid code
+- Adds missing Start/End nodes if absent
+- Fixes decision nodes missing Yes/No branches
+- Ensures proper node connectivity
+- Works generically for any C++ project without hardcoding
+- Applied automatically on retries and as a final repair pass
 
 ### Complexity Metrics
 
