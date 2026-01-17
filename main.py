@@ -265,14 +265,57 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
         python main.py example.cpp --function CreateVolume --sub-functions AllocateSpace,UpdateMetadata
     """
     try:
-        # Normalize file path to handle Windows backslashes properly
-        file_path = str(Path(file_path).resolve())
+        # Handle Windows paths - the path might have backslashes that need proper handling
+        import os
         
-        # Verify file exists
-        if not Path(file_path).exists():
-            click.echo(f"Error: File not found: {file_path}", err=True)
+        # First, try to normalize using os.path which handles Windows paths better
+        normalized_path = os.path.normpath(file_path)
+        
+        # Try multiple path resolution strategies
+        path_candidates = [
+            normalized_path,
+            os.path.abspath(normalized_path),
+            str(Path(normalized_path).resolve()) if Path(normalized_path).exists() else normalized_path,
+            file_path,  # Original path
+        ]
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        path_candidates = [p for p in path_candidates if p not in seen and not seen.add(p)]
+        
+        # Find the first path that exists
+        file_path = None
+        for candidate in path_candidates:
+            try:
+                path_obj = Path(candidate)
+                if path_obj.exists() and path_obj.is_file():
+                    file_path = str(path_obj.resolve())
+                    break
+            except (OSError, ValueError):
+                continue
+        
+        # If still not found, try one more time with raw string handling
+        if not file_path:
+            # Handle case where backslashes might have been stripped
+            # Reconstruct path if it looks like backslashes were removed
+            if '\\' not in normalized_path and len(normalized_path.split('/')) == 1:
+                # Might be a mangled path, try to reconstruct
+                # This is a fallback for edge cases
+                pass
+            
+            # Final attempt with the original normalized path
+            final_path = Path(normalized_path)
+            if final_path.exists() and final_path.is_file():
+                file_path = str(final_path.resolve())
+        
+        if not file_path:
+            click.echo(f"Error: File not found: {file_path or normalized_path}", err=True)
+            click.echo(f"  Original path: {repr(file_path)}", err=True)
+            click.echo(f"  Normalized: {normalized_path}", err=True)
+            click.echo(f"  Current directory: {os.getcwd()}", err=True)
             sys.exit(1)
         
+        # Verify it's actually a file
         if not Path(file_path).is_file():
             click.echo(f"Error: Path is not a file: {file_path}", err=True)
             sys.exit(1)
