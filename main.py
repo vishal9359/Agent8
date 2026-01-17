@@ -134,27 +134,48 @@ class CompilerPipeline:
         
         click.echo("IR validation passed")
         
-        # Step 9: Generate Mermaid using LLM
+        # Step 9: Generate Mermaid using LLM with validation feedback loop
         click.echo(f"Generating Mermaid flowchart using {self.mermaid_generator.backend} ({self.mermaid_generator.model})...")
-        max_retries = 3
+        max_retries = 5  # Increased retries for better success rate
         mermaid_code = None
+        validation_errors = None
         
-        for attempt in range(max_retries):
+        for attempt in range(1, max_retries + 1):
             try:
-                mermaid_code = self.mermaid_generator.generate(ir_dict, max_retries=1)
+                # Generate with validation feedback from previous attempt
+                click.echo(f"Attempt {attempt}/{max_retries}...")
+                mermaid_code = self.mermaid_generator.generate(
+                    ir_dict, 
+                    validation_errors=validation_errors,
+                    attempt=attempt,
+                    max_retries=1
+                )
                 
                 # Validate Mermaid
                 is_valid, errors = self.validator.validate_mermaid(mermaid_code)
                 if is_valid:
-                    click.echo("Mermaid validation passed")
+                    click.echo("✓ Mermaid validation passed")
                     break
                 else:
-                    click.echo(f"Mermaid validation failed (attempt {attempt + 1}/{max_retries}): {errors}", err=True)
-                    if attempt == max_retries - 1:
-                        raise ValueError(f"Mermaid validation failed after {max_retries} attempts: {errors}")
+                    validation_errors = errors
+                    click.echo(f"✗ Mermaid validation failed (attempt {attempt}/{max_retries})", err=True)
+                    click.echo(f"  Errors: {', '.join(errors[:3])}{'...' if len(errors) > 3 else ''}", err=True)
+                    
+                    if attempt < max_retries:
+                        click.echo(f"  Retrying with improved prompt...", err=True)
+                    else:
+                        # Last attempt failed - show all errors
+                        click.echo(f"\nAll validation errors:", err=True)
+                        for i, error in enumerate(errors, 1):
+                            click.echo(f"  {i}. {error}", err=True)
+                        raise ValueError(f"Mermaid validation failed after {max_retries} attempts")
+                        
+            except ValueError:
+                # Re-raise validation errors
+                raise
             except Exception as e:
-                click.echo(f"Mermaid generation failed (attempt {attempt + 1}/{max_retries}): {str(e)}", err=True)
-                if attempt == max_retries - 1:
+                click.echo(f"✗ Mermaid generation failed (attempt {attempt}/{max_retries}): {str(e)}", err=True)
+                if attempt == max_retries:
                     raise
         
         if not mermaid_code:

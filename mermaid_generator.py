@@ -4,7 +4,7 @@ Generates Mermaid code from validated PseudoCodeModel IR using open-source local
 Supports Ollama and Hugging Face transformers.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import json
 import os
 import requests
@@ -59,12 +59,15 @@ class MermaidGenerator:
                 "pip install torch transformers accelerate"
             )
     
-    def generate(self, ir_model: Dict, max_retries: int = 3) -> str:
+    def generate(self, ir_model: Dict, validation_errors: Optional[List[str]] = None, 
+                 attempt: int = 1, max_retries: int = 3) -> str:
         """
         Generate Mermaid code from PseudoCodeModel IR.
         
         Args:
             ir_model: PseudoCodeModel dictionary
+            validation_errors: List of validation errors from previous attempt (if any)
+            attempt: Current attempt number (1-based)
             max_retries: Maximum retry attempts
             
         Returns:
@@ -73,159 +76,145 @@ class MermaidGenerator:
         Raises:
             Exception: If generation fails after max_retries
         """
-        prompt = self._build_prompt(ir_model)
+        prompt = self._build_prompt(ir_model, validation_errors, attempt)
         
-        for attempt in range(max_retries):
-            try:
-                if self.backend == "ollama":
-                    mermaid_code = self._call_ollama(prompt)
-                elif self.backend == "transformers":
-                    mermaid_code = self._call_transformers(prompt)
-                else:
-                    raise ValueError(f"Unknown backend: {self.backend}")
-                
-                return mermaid_code
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise Exception(f"LLM Mermaid generation failed after {max_retries} attempts: {str(e)}")
-                continue
-        
-        raise Exception(f"LLM Mermaid generation failed after {max_retries} attempts")
+        try:
+            if self.backend == "ollama":
+                mermaid_code = self._call_ollama(prompt)
+            elif self.backend == "transformers":
+                mermaid_code = self._call_transformers(prompt)
+            else:
+                raise ValueError(f"Unknown backend: {self.backend}")
+            
+            return mermaid_code
+        except Exception as e:
+            raise Exception(f"LLM Mermaid generation failed: {str(e)}")
     
-    def _build_prompt(self, ir_model: Dict) -> str:
-        """Build LLM prompt for Mermaid generation."""
+    def _build_prompt(self, ir_model: Dict, validation_errors: Optional[List[str]] = None,
+                     attempt: int = 1) -> str:
+        """Build LLM prompt for Mermaid generation with validation feedback."""
         ir_json = json.dumps(ir_model, indent=2)
         
-        prompt = """You are a software architect.
+        # Base prompt
+        prompt = """You are a software architect specializing in Mermaid flowcharts.
 
 Convert the following pseudo code model into a valid Mermaid flowchart.
 
-Rules:
-Graph Type
+CRITICAL RULES - READ CAREFULLY:
 
-Always use:
-flowchart TD
+1. Graph Type: Always start with 'flowchart TD'
 
-Node Types
+2. Node Types:
+   - Start: S1([Start])
+   - End: E1([End])
+   - Process: P1[statement]
+   - Decision: D1{condition}
+   - Return: R1([return value])
+   - Break: B1([break])
+   - Continue: C1([continue])
 
-Start node : ([Start])
-End node : ([End])
-Process : [statement]
-Function call : [/func()/]
-Decision : {condition}
-Return : ([return value])
-Break : ([break])
-Continue : ([continue])
-Switch decision : {switch(expr)}
-Case label : [case X]
+3. DECISION NODES - MOST IMPORTANT:
+   EVERY decision node MUST have EXACTLY TWO outgoing edges:
+   - One labeled |Yes| or |True| (for true condition)
+   - One labeled |No| or |False| (for false condition)
+   
+   Example:
+   D1{condition}
+   D1 -->|Yes| P1[action if true]
+   D1 -->|No| P2[action if false]
+   
+   NEVER create a decision node with only one branch!
 
-Edge Rules
+4. Edge Labeling Rules:
+   - Decision branches: |Yes| and |No| (or |True| and |False|)
+   - Switch cases: |case 1|, |case 2|, |default|
+   - All decision edges MUST be labeled
 
-All decision branches must be labeled:
-Yes / No
-True / False
-case X
-default
+5. If-Else Pattern:
+   D1{condition}
+   D1 -->|Yes| P1[then branch]
+   D1 -->|No| P2[else branch]
+   P1 --> NEXT
+   P2 --> NEXT
 
-If-Else Rule
+6. While Loop Pattern:
+   D1{condition}
+   D1 -->|Yes| P1[loop body]
+   P1 --> D1
+   D1 -->|No| NEXT
 
-if (cond) { A } else { B }
+7. For Loop Pattern:
+   P1[init]
+   D1{condition}
+   D1 -->|Yes| P2[body]
+   P2 --> P3[increment]
+   P3 --> D1
+   D1 -->|No| NEXT
 
-D1{cond}
-D1 -->|Yes| P1[A]
-D1 -->|No| P2[B]
+8. Switch Pattern:
+   D1{switch(x)}
+   D1 -->|case 1| P1[action 1]
+   D1 -->|case 2| P2[action 2]
+   D1 -->|default| P3[default action]
+   P1 --> NEXT
+   P2 --> NEXT
+   P3 --> NEXT
 
-While Loop Rule
+9. Return Pattern:
+   R1([return value])
+   R1 --> E1([End])
 
-while(cond) { A }
+10. Structural Requirements:
+    - Exactly ONE Start node: S1([Start])
+    - Exactly ONE End node: E1([End])
+    - All decision nodes have TWO branches (Yes and No)
+    - No orphan nodes
+    - All paths eventually reach End
 
-D1{cond}
-D1 -->|Yes| P1[A]
-P1 --> D1
-D1 -->|No| NEXT
+11. Naming Convention:
+    - S1, S2 = Start nodes
+    - E1, E2 = End nodes
+    - D1, D2, D3 = Decision nodes
+    - P1, P2, P3 = Process nodes
+    - R1, R2 = Return nodes
+    - B1, B2 = Break nodes
+    - C1, C2 = Continue nodes
 
-For Loop Rule
+"""
+        
+        # Add validation error feedback if this is a retry
+        if validation_errors and attempt > 1:
+            prompt += f"""
+IMPORTANT: Previous attempt failed validation. Fix these errors:
 
-for(init; cond; inc) { A }
+VALIDATION ERRORS FROM PREVIOUS ATTEMPT:
+"""
+            for i, error in enumerate(validation_errors, 1):
+                prompt += f"{i}. {error}\n"
+            
+            prompt += """
+CRITICAL FIXES NEEDED:
+- Ensure EVERY decision node has BOTH |Yes| and |No| branches
+- Check that all decision edges are properly labeled
+- Verify all nodes are connected correctly
+- Make sure there is exactly one Start and one End node
 
-P1[init]
-D1{cond}
-D1 -->|Yes| P2[A]
-P2 --> P3[inc]
-P3 --> D1
-D1 -->|No| NEXT
-
-Do-While Rule
-
-do { A } while(cond)
-
-P1[A]
-D1{cond}
-P1 --> D1
-D1 -->|Yes| P1
-D1 -->|No| NEXT
-
-Switch Rule
-
-switch(x) {
-case 1: A; break;
-case 2: B; break;
-default: C;
-}
-
-D1{switch(x)}
-D1 -->|case 1| P1[A]
-P1 --> B1([break])
-B1 --> NEXT
-
-D1 -->|case 2| P2[B]
-P2 --> B2([break])
-B2 --> NEXT
-
-D1 -->|default| P3[C]
-P3 --> NEXT
-
-Return Rule
-
-return x;
-
-R1([return x])
-R1 --> END
-
-Naming Convention
-
-S1 = Start
-E1 = End
-D1 = Decision
-P1 = Process
-R1 = Return
-B1 = Break
-C1 = Continue
-
-Structural Rules
-
-Exactly one Start
-
-Exactly one End
-
-No orphan nodes
-
-No missing branches
-
-No dangling edges
-
-Nested blocks must reconnect correctly
-
-Break exits only loop or switch
-
-Continue jumps to loop condition
-
-Return exits function
-
+"""
+        
+        # Add IR model
+        prompt += f"""
 Pseudo Code Model:
-""" + ir_json + """
+{ir_json}
 
-Return only Mermaid code. Do not include any explanation, reasoning, or markdown code blocks. Return only the raw Mermaid flowchart code starting with 'flowchart TD'."""
+INSTRUCTIONS:
+1. Analyze the pseudo code model carefully
+2. Identify all decision nodes (type: "decision")
+3. For EACH decision node, create TWO edges: one with |Yes| label, one with |No| label
+4. Ensure all decision nodes have exactly 2 outgoing edges
+5. Generate valid Mermaid code starting with 'flowchart TD'
+6. Return ONLY the Mermaid code, no explanations, no markdown blocks
+
+Generate the Mermaid flowchart now:"""
         
         return prompt
     
@@ -240,7 +229,7 @@ Return only Mermaid code. Do not include any explanation, reasoning, or markdown
                 "stream": False,
                 "options": {
                     "temperature": self.temperature,
-                    "num_predict": 2000
+                    "num_predict": 3000  # Increased for better quality
                 }
             }
             
@@ -288,7 +277,7 @@ Return only Mermaid code. Do not include any explanation, reasoning, or markdown
             
             outputs = self._pipeline(
                 full_prompt,
-                max_new_tokens=2000,
+                max_new_tokens=3000,  # Increased for better quality
                 temperature=self.temperature,
                 do_sample=(self.temperature > 0),
                 pad_token_id=self._pipeline.tokenizer.eos_token_id,

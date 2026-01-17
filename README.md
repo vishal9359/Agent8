@@ -54,7 +54,8 @@ Mermaid Output + JSON IR + Complexity Metrics
 5. **IR Validation**: Validates IR structure, connectivity, and correctness
 6. **Mermaid Generation**: Uses open-source LLM to generate Mermaid flowchart from validated IR
 7. **Mermaid Validation**: Validates Mermaid syntax and control flow
-8. **Metrics Calculation**: Computes complexity metrics
+8. **Intelligent Retry**: On validation failure, regenerates with improved prompts including specific error feedback
+9. **Metrics Calculation**: Computes complexity metrics
 
 ### LLM Backends
 
@@ -173,13 +174,20 @@ The Intermediate Representation (IR) is a JSON structure optimized for LLM under
 - Structural validation (exactly one Start/End)
 - Reachability validation
 
-#### Mermaid Validation
+#### Mermaid Validation with Intelligent Retry
 
-- Syntax validation
-- Control flow validation
-- Structural validation
-- Semantic validation
-- Parse error detection
+- **Syntax validation**: Ensures valid Mermaid syntax
+- **Control flow validation**: Verifies all decision nodes have Yes/No branches
+- **Structural validation**: Checks for exactly one Start and End node
+- **Semantic validation**: Validates node connections and flow
+- **Parse error detection**: Catches common LLM output errors
+
+**Intelligent Retry Mechanism:**
+- On validation failure, the agent automatically retries with an improved prompt
+- Validation errors are fed back to the LLM for targeted fixes
+- Up to 5 retry attempts with progressively better prompts
+- Each retry includes specific error messages to guide correction
+- Focuses on common issues like missing decision branches
 
 ### Complexity Metrics
 

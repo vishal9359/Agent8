@@ -243,15 +243,34 @@ class Validator:
             errors.append(f"Mismatched brackets: {open_brackets} open, {close_brackets} close")
         
         # Control flow validation
-        # Check for decision branches
-        decision_pattern = r'[A-Za-z0-9_]+\{.*?\}'
+        # Check for decision branches - more thorough check
+        decision_pattern = r'([A-Za-z0-9_]+)\{.*?\}'
         decisions = re.findall(decision_pattern, mermaid_code)
-        for decision in decisions:
-            decision_id = decision.split('{')[0]
-            # Check for Yes/No branches
-            decision_arrows = re.findall(rf'{re.escape(decision_id)}\s*-->.*?\|(Yes|No|YES|NO|True|False|TRUE|FALSE)', mermaid_code)
-            if len(decision_arrows) < 2:
-                errors.append(f"Decision node {decision_id} missing Yes/No branches")
+        for decision_id in decisions:
+            # Find all edges from this decision node
+            # Pattern: decision_id -->|label| target
+            edge_pattern = rf'{re.escape(decision_id)}\s*-->'
+            edges_from_decision = re.findall(edge_pattern, mermaid_code)
+            
+            if len(edges_from_decision) == 0:
+                errors.append(f"Decision node {decision_id} has no outgoing edges")
+            else:
+                # Check for labeled branches (Yes/No/True/False)
+                labeled_edges = re.findall(
+                    rf'{re.escape(decision_id)}\s*-->.*?\|(Yes|No|YES|NO|True|False|TRUE|FALSE)',
+                    mermaid_code
+                )
+                
+                # Check if we have both Yes and No branches
+                has_yes = any(label.lower() in ['yes', 'true'] for label in labeled_edges)
+                has_no = any(label.lower() in ['no', 'false'] for label in labeled_edges)
+                
+                if not has_yes:
+                    errors.append(f"Decision node {decision_id} missing Yes/True branch - add: {decision_id} -->|Yes| TARGET")
+                if not has_no:
+                    errors.append(f"Decision node {decision_id} missing No/False branch - add: {decision_id} -->|No| TARGET")
+                if len(edges_from_decision) < 2:
+                    errors.append(f"Decision node {decision_id} must have at least 2 outgoing edges (currently has {len(edges_from_decision)})")
         
         # Structural validation
         start_nodes = re.findall(r'[A-Za-z0-9_]+\(\[Start\]\)', mermaid_code)
