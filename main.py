@@ -233,7 +233,7 @@ class CompilerPipeline:
 
 
 @click.command()
-@click.argument('file_path', type=click.Path(exists=True))
+@click.argument('file_path', type=str)
 @click.option('--function', '-f', help='Function name to compile (default: first function)')
 @click.option('--sub-functions', '-s', help='Comma-separated list of sub-functions to expand')
 @click.option('--output-dir', '-o', default='output', help='Output directory (default: output)')
@@ -265,6 +265,18 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
         python main.py example.cpp --function CreateVolume --sub-functions AllocateSpace,UpdateMetadata
     """
     try:
+        # Normalize file path to handle Windows backslashes properly
+        file_path = str(Path(file_path).resolve())
+        
+        # Verify file exists
+        if not Path(file_path).exists():
+            click.echo(f"Error: File not found: {file_path}", err=True)
+            sys.exit(1)
+        
+        if not Path(file_path).is_file():
+            click.echo(f"Error: Path is not a file: {file_path}", err=True)
+            sys.exit(1)
+        
         # Parse sub-functions
         sub_func_list = None
         if sub_functions:
