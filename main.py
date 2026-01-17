@@ -320,53 +320,86 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                 # We'll try common patterns
                 reconstructed_paths = []
                 
-                # Try inserting backslashes before common folder names
+                # Try to reconstruct the path by inserting backslashes intelligently
+                import re
                 mangled = normalized_path
-                if mangled.startswith('D:') or mangled.startswith('C:'):
-                    drive = mangled[:2]
-                    rest = mangled[2:]
-                    
-                    # Common patterns: git-project, src, io, frontend_io, etc.
-                    # Try inserting backslashes before lowercase letters that follow uppercase or digits
-                    import re
-                    
-                    # Pattern 1: Insert before common folder patterns
-                    patterns_to_try = [
-                        # Try before common folder names
-                        (r'(git-project)', r'\\\1'),
-                        (r'(poseidonos)', r'\\\1'),
-                        (r'(src)', r'\\\1'),
-                        (r'(io)', r'\\\1'),
-                        (r'(frontend_io)', r'\\\1'),
-                        # Try before file extensions
-                        (r'(\.[a-z]+$)', r'\\\1'),
-                    ]
-                    
-                    test_path = rest
-                    for pattern, replacement in patterns_to_try:
-                        test_path = re.sub(pattern, replacement, test_path)
-                    
-                    reconstructed = drive + test_path
-                    reconstructed_paths.append(reconstructed)
-                    
-                    # Pattern 2: Try inserting backslashes before underscores and hyphens
-                    test_path2 = re.sub(r'([a-z])([A-Z])', r'\1\\\2', rest)  # Before capital letters
-                    test_path2 = re.sub(r'(_)', r'\\\1', test_path2)  # Before underscores
-                    test_path2 = re.sub(r'(-)', r'\\\1', test_path2)  # Before hyphens
-                    reconstructed2 = drive + test_path2
-                    if reconstructed2 != reconstructed:
-                        reconstructed_paths.append(reconstructed2)
-                    
-                    # Try each reconstructed path
-                    for recon_path in reconstructed_paths:
-                        try:
-                            path_obj = Path(recon_path)
-                            if path_obj.exists() and path_obj.is_file():
-                                resolved_path = str(path_obj.resolve())
-                                click.echo(f"✓ Reconstructed path: {resolved_path}")
-                                break
-                        except (OSError, ValueError, RuntimeError):
-                            continue
+                
+                if ':' in mangled:
+                    parts = mangled.split(':', 1)
+                    if len(parts) == 2:
+                        drive = parts[0] + ':'
+                        rest = parts[1]
+                        
+                        # Strategy 1: Insert backslashes before known folder patterns (in order)
+                        # Handle: git-projectposeidonossrciofrontend_ioaio.cpp
+                        # Result: git-project\poseidonos\src\io\frontend_io\aio.cpp
+                        test_path = rest
+                        
+                        # Insert backslash before each known pattern (but not if already has one)
+                        known_folders = ['git-project', 'poseidonos', 'src', 'io', 'frontend_io', 'backend_io']
+                        for folder in known_folders:
+                            # Insert backslash before the folder name if it appears
+                            pattern = r'(?<!\\)' + re.escape(folder)
+                            test_path = re.sub(pattern, r'\\' + folder, test_path, count=1)
+                        
+                        # Insert backslash before file extension
+                        test_path = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path)
+                        
+                        # Clean up: ensure single backslashes, add leading backslash after drive
+                        test_path = re.sub(r'\\\\+', r'\\', test_path)
+                        if not test_path.startswith('\\'):
+                            test_path = '\\' + test_path
+                        
+                        reconstructed = drive + test_path
+                        reconstructed_paths.append(reconstructed)
+                        
+                        # Strategy 2: Insert before hyphens, underscores, and file extensions
+                        test_path2 = rest
+                        # Insert before hyphen (but keep the hyphen)
+                        test_path2 = re.sub(r'(-)', r'\\\1', test_path2)
+                        # Insert before underscore (but keep the underscore)  
+                        test_path2 = re.sub(r'(_)', r'\\\1', test_path2)
+                        # Insert before file extension
+                        test_path2 = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path2)
+                        # Clean up
+                        test_path2 = re.sub(r'\\\\+', r'\\', test_path2)
+                        if not test_path2.startswith('\\'):
+                            test_path2 = '\\' + test_path2
+                        
+                        reconstructed2 = drive + test_path2
+                        if reconstructed2 != reconstructed:
+                            reconstructed_paths.append(reconstructed2)
+                        
+                        # Strategy 3: Smart word boundary detection
+                        # Insert backslash before transitions: lowercase-to-lowercase word boundaries
+                        # This handles cases like "poseidonossrc" -> "poseidonos\src"
+                        test_path3 = rest
+                        # Pattern: lowercase letter followed by lowercase letter that starts a known word
+                        for folder in ['poseidonos', 'src', 'io']:
+                            # Find the folder name and insert backslash before it
+                            pattern = r'(?<=[a-z])' + re.escape(folder)
+                            test_path3 = re.sub(pattern, r'\\' + folder, test_path3, count=1)
+                        # Insert before file extension
+                        test_path3 = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path3)
+                        # Clean up
+                        test_path3 = re.sub(r'\\\\+', r'\\', test_path3)
+                        if not test_path3.startswith('\\'):
+                            test_path3 = '\\' + test_path3
+                        
+                        reconstructed3 = drive + test_path3
+                        if reconstructed3 not in reconstructed_paths:
+                            reconstructed_paths.append(reconstructed3)
+                        
+                        # Try each reconstructed path
+                        for recon_path in reconstructed_paths:
+                            try:
+                                path_obj = Path(recon_path)
+                                if path_obj.exists() and path_obj.is_file():
+                                    resolved_path = str(path_obj.resolve())
+                                    click.echo(f"✓ Successfully reconstructed path: {resolved_path}")
+                                    break
+                            except (OSError, ValueError, RuntimeError):
+                                continue
                 
                 if not resolved_path:
                     click.echo(f"Error: Path appears to be malformed. Backslashes were stripped by the shell.", err=True)
