@@ -312,18 +312,82 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                 continue
         
         if not resolved_path:
-            # Last attempt: try to fix if backslashes were stripped
-            # Check if path looks mangled (no separators but has drive letter)
+            # Last attempt: try to reconstruct if backslashes were stripped
+            # Check if path looks mangled (has drive letter but no path separators)
             if ':' in normalized_path and (os.sep not in normalized_path and '/' not in normalized_path and '\\' not in normalized_path):
-                click.echo(f"Error: Path appears to be malformed. Backslashes may have been stripped.", err=True)
-                click.echo(f"  Received: {repr(original_path)}", err=True)
-                click.echo(f"  Try quoting the path: python main.py \"{original_path}\" --function ...", err=True)
+                # Try to reconstruct the path by inserting backslashes
+                # Pattern: DriveLetter:folder1folder2folder3file.ext
+                # We'll try common patterns
+                reconstructed_paths = []
+                
+                # Try inserting backslashes before common folder names
+                mangled = normalized_path
+                if mangled.startswith('D:') or mangled.startswith('C:'):
+                    drive = mangled[:2]
+                    rest = mangled[2:]
+                    
+                    # Common patterns: git-project, src, io, frontend_io, etc.
+                    # Try inserting backslashes before lowercase letters that follow uppercase or digits
+                    import re
+                    
+                    # Pattern 1: Insert before common folder patterns
+                    patterns_to_try = [
+                        # Try before common folder names
+                        (r'(git-project)', r'\\\1'),
+                        (r'(poseidonos)', r'\\\1'),
+                        (r'(src)', r'\\\1'),
+                        (r'(io)', r'\\\1'),
+                        (r'(frontend_io)', r'\\\1'),
+                        # Try before file extensions
+                        (r'(\.[a-z]+$)', r'\\\1'),
+                    ]
+                    
+                    test_path = rest
+                    for pattern, replacement in patterns_to_try:
+                        test_path = re.sub(pattern, replacement, test_path)
+                    
+                    reconstructed = drive + test_path
+                    reconstructed_paths.append(reconstructed)
+                    
+                    # Pattern 2: Try inserting backslashes before underscores and hyphens
+                    test_path2 = re.sub(r'([a-z])([A-Z])', r'\1\\\2', rest)  # Before capital letters
+                    test_path2 = re.sub(r'(_)', r'\\\1', test_path2)  # Before underscores
+                    test_path2 = re.sub(r'(-)', r'\\\1', test_path2)  # Before hyphens
+                    reconstructed2 = drive + test_path2
+                    if reconstructed2 != reconstructed:
+                        reconstructed_paths.append(reconstructed2)
+                    
+                    # Try each reconstructed path
+                    for recon_path in reconstructed_paths:
+                        try:
+                            path_obj = Path(recon_path)
+                            if path_obj.exists() and path_obj.is_file():
+                                resolved_path = str(path_obj.resolve())
+                                click.echo(f"✓ Reconstructed path: {resolved_path}")
+                                break
+                        except (OSError, ValueError, RuntimeError):
+                            continue
+                
+                if not resolved_path:
+                    click.echo(f"Error: Path appears to be malformed. Backslashes were stripped by the shell.", err=True)
+                    click.echo(f"  Received: {repr(original_path)}", err=True)
+                    click.echo(f"", err=True)
+                    click.echo(f"  SOLUTION: Quote the path in your command:", err=True)
+                    click.echo(f"  python main.py \"D:\\git-project\\poseidonos\\src\\io\\frontend_io\\aio.cpp\" --function _SendUserCompletion", err=True)
+                    click.echo(f"", err=True)
+                    click.echo(f"  Or use forward slashes (no quotes needed):", err=True)
+                    click.echo(f"  python main.py D:/git-project/poseidonos/src/io/frontend_io/aio.cpp --function _SendUserCompletion", err=True)
+                    sys.exit(1)
             else:
                 click.echo(f"Error: File not found: {normalized_path}", err=True)
                 click.echo(f"  Original path received: {repr(original_path)}", err=True)
                 click.echo(f"  Normalized path: {normalized_path}", err=True)
                 click.echo(f"  Current directory: {os.getcwd()}", err=True)
                 click.echo(f"  Tried {len(path_candidates)} path variations", err=True)
+            sys.exit(1)
+        
+        if not resolved_path:
+            click.echo(f"Error: Could not resolve file path", err=True)
             sys.exit(1)
         
         file_path = resolved_path
