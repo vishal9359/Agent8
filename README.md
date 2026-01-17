@@ -254,6 +254,12 @@ ollama serve
 
 # In another terminal, compile a function
 python main.py example.cpp --function CreateVolume
+
+# For class member functions, use fully qualified name
+python main.py aio.cpp --function AioCompletion::_SendUserCompletion
+
+# Or just the method name (will match any class)
+python main.py aio.cpp --function _SendUserCompletion
 ```
 
 ### Using Different Models
