@@ -221,19 +221,72 @@ Generate the Mermaid flowchart now:"""
     def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API to generate Mermaid code."""
         try:
-            # Prepare request
-            url = f"{self.ollama_base_url}/api/generate"
-            payload = {
+            # First, check if Ollama is running
+            try:
+                health_url = f"{self.ollama_base_url}/api/tags"
+                health_response = requests.get(health_url, timeout=5)
+                if health_response.status_code == 404:
+                    # Try alternative health check
+                    health_url = f"{self.ollama_base_url}/api/version"
+                    health_response = requests.get(health_url, timeout=5)
+            except requests.exceptions.ConnectionError:
+                raise Exception(
+                    f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
+                    "Please ensure:\n"
+                    "  1. Ollama is installed (https://ollama.ai)\n"
+                    "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
+                    "  3. The model is pulled: 'ollama pull llama3.2'\n"
+                    f"  4. Ollama is accessible at {self.ollama_base_url}"
+                )
+            
+            # Try /api/chat endpoint first (newer Ollama versions)
+            chat_url = f"{self.ollama_base_url}/api/chat"
+            chat_payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a Mermaid flowchart generator. Return only valid Mermaid code."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": 3000
+                }
+            }
+            
+            try:
+                response = requests.post(chat_url, json=chat_payload, timeout=300)
+                if response.status_code == 200:
+                    result = response.json()
+                    mermaid_code = result.get("message", {}).get("content", "").strip()
+                    if mermaid_code:
+                        # Remove markdown code blocks if present
+                        if mermaid_code.startswith("```"):
+                            lines = mermaid_code.split("\n")
+                            mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+                        return mermaid_code
+            except requests.exceptions.RequestException:
+                pass  # Fall back to /api/generate
+            
+            # Fallback to /api/generate endpoint (older Ollama versions)
+            generate_url = f"{self.ollama_base_url}/api/generate"
+            generate_payload = {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
                     "temperature": self.temperature,
-                    "num_predict": 3000  # Increased for better quality
+                    "num_predict": 3000
                 }
             }
             
-            response = requests.post(url, json=payload, timeout=300)
+            response = requests.post(generate_url, json=generate_payload, timeout=300)
             response.raise_for_status()
             
             result = response.json()
@@ -245,11 +298,43 @@ Generate the Mermaid flowchart now:"""
                 mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
             
             return mermaid_code
+            
         except requests.exceptions.ConnectionError:
             raise Exception(
-                f"Cannot connect to Ollama at {self.ollama_base_url}. "
-                "Make sure Ollama is running. Install from https://ollama.ai"
+                f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
+                "Please ensure:\n"
+                "  1. Ollama is installed (https://ollama.ai)\n"
+                "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
+                "  3. The model is pulled: 'ollama pull llama3.2'\n"
+                f"  4. Ollama is accessible at {self.ollama_base_url}"
             )
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # Check if model exists
+                try:
+                    tags_url = f"{self.ollama_base_url}/api/tags"
+                    tags_response = requests.get(tags_url, timeout=5)
+                    if tags_response.status_code == 200:
+                        models = tags_response.json().get("models", [])
+                        model_names = [m.get("name", "") for m in models]
+                        raise Exception(
+                            f"Model '{self.model}' not found in Ollama.\n"
+                            f"Available models: {', '.join(model_names) if model_names else 'None'}\n"
+                            f"Pull the model with: ollama pull {self.model}"
+                        )
+                except:
+                    pass
+                
+                raise Exception(
+                    f"Ollama API endpoint not found (404).\n"
+                    "This might mean:\n"
+                    "  1. Ollama is not running - start with 'ollama serve'\n"
+                    "  2. Wrong Ollama URL - check with: --ollama-url <url>\n"
+                    "  3. Ollama version mismatch - try updating Ollama\n"
+                    f"  4. Model '{self.model}' doesn't exist - pull it with: ollama pull {self.model}"
+                )
+            else:
+                raise Exception(f"Ollama API error ({e.response.status_code}): {str(e)}")
         except requests.exceptions.RequestException as e:
             raise Exception(f"Ollama API error: {str(e)}")
     
