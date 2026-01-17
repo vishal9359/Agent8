@@ -189,6 +189,15 @@ class CFGExtractor:
                 else:
                     else_node = child
         
+        # Validate required nodes
+        if not condition_node:
+            # Fallback: treat as expression
+            return self._process_expression(stmt_node, prev_id)
+        
+        if not then_node:
+            # No then branch, treat as expression
+            return self._process_expression(stmt_node, prev_id)
+        
         # Create decision node
         decision_id = self._new_node_id()
         condition_text = self.source_code[condition_node.start_byte:condition_node.end_byte].strip()
@@ -247,6 +256,11 @@ class CFGExtractor:
                 condition_node = child
             elif child.type in ['compound_statement', 'expression_statement']:
                 body_node = child
+        
+        # Validate required nodes
+        if not condition_node or not body_node:
+            # Fallback: treat as expression
+            return self._process_expression(stmt_node, prev_id)
         
         # Create loop condition node
         loop_id = self._new_node_id()
@@ -377,6 +391,11 @@ class CFGExtractor:
             elif child.type == 'parenthesized_expression':
                 condition_node = child
         
+        # Validate required nodes
+        if not body_node or not condition_node:
+            # Fallback: treat as expression
+            return self._process_expression(stmt_node, prev_id)
+        
         # Process body first
         body_id = self._process_statement(body_node, prev_id)
         
@@ -419,6 +438,11 @@ class CFGExtractor:
                 expression_node = child
             elif child.type == 'compound_statement':
                 body_node = child
+        
+        # Validate required nodes
+        if not expression_node or not body_node:
+            # Fallback: treat as expression
+            return self._process_expression(stmt_node, prev_id)
         
         # Create switch node
         switch_id = self._new_node_id()
