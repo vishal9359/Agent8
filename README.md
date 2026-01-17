@@ -455,9 +455,47 @@ Error: Cannot connect to Ollama at http://localhost:11434
 ```
 
 **Solution:**
-1. Make sure Ollama is running: `ollama serve`
-2. Check if the model is pulled: `ollama list`
-3. Verify the URL: `--ollama-url http://localhost:11434`
+1. Make sure Ollama is installed: Download from https://ollama.ai
+2. Start Ollama service:
+   - **Windows**: Ollama should run as a service automatically, or run `ollama serve` in a terminal
+   - **Linux/Mac**: Run `ollama serve` in a terminal
+3. Check if Ollama is running:
+   ```bash
+   curl http://localhost:11434/api/tags
+   # Or visit http://localhost:11434 in browser
+   ```
+4. Pull the required model:
+   ```bash
+   ollama pull llama3.2
+   ```
+5. Verify the model exists: `ollama list`
+6. Check the URL: Use `--ollama-url` if Ollama is on a different host/port
+
+### Ollama 404 Error
+
+```
+Error: Ollama API error: 404 Client Error: Not Found
+```
+
+**Possible causes:**
+1. **Ollama is not running**: Start Ollama with `ollama serve`
+2. **Model doesn't exist**: Pull the model with `ollama pull <model-name>`
+3. **Wrong Ollama URL**: Check with `--ollama-url <correct-url>`
+4. **Ollama version mismatch**: Update Ollama to the latest version
+
+**Quick fix:**
+```bash
+# Check if Ollama is running
+ollama list
+
+# If not, start Ollama
+ollama serve
+
+# Pull the model if missing
+ollama pull llama3.2
+
+# Then retry your command
+```
 
 ### CUDA Out of Memory (Transformers)
 
