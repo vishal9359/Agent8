@@ -336,14 +336,17 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                         test_path = rest
                         
                         # Insert backslash before each known pattern (but not if already has one)
-                        known_folders = ['git-project', 'poseidonos', 'src', 'io', 'frontend_io', 'backend_io']
+                        # Order matters - process longer patterns first to avoid partial matches
+                        known_folders = ['frontend_io', 'backend_io', 'git-project', 'poseidonos', 'src', 'io']
                         for folder in known_folders:
-                            # Insert backslash before the folder name if it appears
-                            pattern = r'(?<!\\)' + re.escape(folder)
-                            test_path = re.sub(pattern, r'\\' + folder, test_path, count=1)
+                            # Insert backslash before the folder name if it appears (only once per occurrence)
+                            # Use word boundary to avoid partial matches
+                            pattern = r'(?<!\\)(?<!' + re.escape(folder[0]) + r')' + re.escape(folder)
+                            test_path = re.sub(pattern, r'\\' + folder, test_path)
                         
-                        # Insert backslash before file extension
-                        test_path = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path)
+                        # DON'T insert backslash before file extension - file extensions are part of filenames
+                        # Instead, ensure backslash is before the filename (which ends with extension)
+                        # The filename should already be separated by the folder matching above
                         
                         # Clean up: ensure single backslashes, add leading backslash after drive
                         test_path = re.sub(r'\\\\+', r'\\', test_path)
@@ -353,14 +356,13 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                         reconstructed = drive + test_path
                         reconstructed_paths.append(reconstructed)
                         
-                        # Strategy 2: Insert before hyphens, underscores, and file extensions
+                        # Strategy 2: Insert before hyphens and underscores (folder separators)
                         test_path2 = rest
-                        # Insert before hyphen (but keep the hyphen)
+                        # Insert before hyphen (but keep the hyphen) - this separates "git" and "project"
                         test_path2 = re.sub(r'(-)', r'\\\1', test_path2)
-                        # Insert before underscore (but keep the underscore)  
+                        # Insert before underscore (but keep the underscore) - this separates "frontend" and "io"
                         test_path2 = re.sub(r'(_)', r'\\\1', test_path2)
-                        # Insert before file extension
-                        test_path2 = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path2)
+                        # DON'T insert before file extension - it's part of the filename
                         # Clean up
                         test_path2 = re.sub(r'\\\\+', r'\\', test_path2)
                         if not test_path2.startswith('\\'):
@@ -375,12 +377,11 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                         # This handles cases like "poseidonossrc" -> "poseidonos\src"
                         test_path3 = rest
                         # Pattern: lowercase letter followed by lowercase letter that starts a known word
-                        for folder in ['poseidonos', 'src', 'io']:
-                            # Find the folder name and insert backslash before it
+                        for folder in ['poseidonos', 'src', 'io', 'frontend_io', 'backend_io']:
+                            # Find the folder name and insert backslash before it (if not already there)
                             pattern = r'(?<=[a-z])' + re.escape(folder)
                             test_path3 = re.sub(pattern, r'\\' + folder, test_path3, count=1)
-                        # Insert before file extension
-                        test_path3 = re.sub(r'(\.[a-z]{2,4}$)', r'\\\1', test_path3)
+                        # DON'T insert before file extension
                         # Clean up
                         test_path3 = re.sub(r'\\\\+', r'\\', test_path3)
                         if not test_path3.startswith('\\'):
