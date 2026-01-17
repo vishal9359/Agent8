@@ -70,9 +70,13 @@ class ASTParser:
         """
         Find function definition in AST.
         
+        Supports both simple names and fully qualified names:
+        - Simple: "_SendUserCompletion"
+        - Fully qualified: "AioCompletion::_SendUserCompletion"
+        
         Args:
             ast_data: AST data from parse_file or parse_string
-            function_name: Optional function name to find
+            function_name: Optional function name to find (can be Class::Method or just Method)
             
         Returns:
             Function node and its source code
@@ -81,37 +85,129 @@ class ASTParser:
         source = ast_data['source']
         root_node = tree.root_node
         
-        def traverse(node):
-            """Traverse AST to find function definitions."""
+        # Parse fully qualified name if provided
+        target_class = None
+        target_method = None
+        if function_name and '::' in function_name:
+            parts = function_name.split('::', 1)
+            target_class = parts[0].strip()
+            target_method = parts[1].strip()
+        else:
+            target_method = function_name
+        
+        def extract_function_name(node, source_str):
+            """Extract function name from function_definition node."""
+            # Look for function_declarator
+            func_declarator = None
+            for child in node.children:
+                if child.type == 'function_declarator':
+                    func_declarator = child
+                    break
+            
+            if not func_declarator:
+                return None, None
+            
+            # Extract identifier - could be field_identifier for member functions
+            func_name_node = None
+            func_name = None
+            class_name = None
+            
+            # Check for field_identifier (member functions)
+            for child in func_declarator.children:
+                if child.type == 'field_identifier':
+                    func_name_node = child
+                    func_name = source_str[child.start_byte:child.end_byte]
+                    break
+                elif child.type == 'qualified_identifier':
+                    # Handle qualified identifiers
+                    for subchild in child.children:
+                        if subchild.type == 'field_identifier':
+                            func_name_node = subchild
+                            func_name = source_str[subchild.start_byte:subchild.end_byte]
+                            break
+                elif child.type == 'identifier':
+                    func_name_node = child
+                    func_name = source_str[child.start_byte:child.end_byte]
+                    break
+            
+            # Find containing class name
+            current = node.parent
+            while current:
+                if current.type == 'class_specifier':
+                    # Find class name
+                    for child in current.children:
+                        if child.type == 'type_identifier':
+                            class_name = source_str[child.start_byte:child.end_byte]
+                            break
+                    break
+                current = current.parent
+            
+            return func_name, class_name
+        
+        def traverse(node, require_class_match=True):
+            """Traverse AST to find function definitions.
+            
+            Args:
+                node: AST node to traverse
+                require_class_match: If True, require class name match for fully qualified names
+            """
             if node.type == 'function_definition':
-                func_name_node = None
-                for child in node.children:
-                    if child.type == 'function_declarator':
-                        for subchild in child.children:
-                            if subchild.type == 'identifier':
-                                func_name_node = subchild
-                                break
+                func_name, class_name = extract_function_name(node, source)
                 
-                if func_name_node:
-                    func_name = source[func_name_node.start_byte:func_name_node.end_byte]
-                    if function_name is None or func_name == function_name:
+                if func_name:
+                    # Check if this matches the target
+                    if function_name is None:
+                        # No target specified, return first function
+                        full_name = f"{class_name}::{func_name}" if class_name else func_name
                         func_source = source[node.start_byte:node.end_byte]
                         return {
                             'node': node,
-                            'name': func_name,
+                            'name': full_name,
                             'source': func_source,
                             'start_byte': node.start_byte,
                             'end_byte': node.end_byte
                         }
+                    elif target_class and target_method:
+                        # Match fully qualified name
+                        class_matches = (not require_class_match) or (class_name == target_class)
+                        if class_matches and func_name == target_method:
+                            full_name = f"{class_name}::{func_name}" if class_name else func_name
+                            func_source = source[node.start_byte:node.end_byte]
+                            return {
+                                'node': node,
+                                'name': full_name,
+                                'source': func_source,
+                                'start_byte': node.start_byte,
+                                'end_byte': node.end_byte
+                            }
+                    elif target_method:
+                        # Match just method name (search anywhere)
+                        if func_name == target_method:
+                            full_name = f"{class_name}::{func_name}" if class_name else func_name
+                            func_source = source[node.start_byte:node.end_byte]
+                            return {
+                                'node': node,
+                                'name': full_name,
+                                'source': func_source,
+                                'start_byte': node.start_byte,
+                                'end_byte': node.end_byte
+                            }
             
             for child in node.children:
-                result = traverse(child)
+                result = traverse(child, require_class_match)
                 if result:
                     return result
             
             return None
         
-        return traverse(root_node)
+        # First try with exact class match
+        result = traverse(root_node, require_class_match=True)
+        
+        # If not found with fully qualified name, try matching just the method name as fallback
+        if not result and target_class and target_method:
+            result = traverse(root_node, require_class_match=False)
+        
+        return result
     
     def get_function_body(self, function_node: dict, source: str) -> dict:
         """
