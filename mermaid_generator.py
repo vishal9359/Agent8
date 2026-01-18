@@ -165,20 +165,31 @@ CRITICAL RULES - READ CAREFULLY:
    R1 --> E1([End])
 
 10. Structural Requirements:
-    - Exactly ONE Start node: S1([Start])
-    - Exactly ONE End node: E1([End])
+    - Exactly ONE Start node: S1([Start]) - define it ONCE
+    - Exactly ONE End node: E1([End]) - define it ONCE
     - All decision nodes have TWO branches (Yes and No)
     - No orphan nodes
     - All paths eventually reach End
+    - NO duplicate node definitions (each node ID defined only once)
+    - NO undefined node references (all nodes in edges must be defined)
+    - NO "NEXT" placeholder - use actual node IDs or End node
 
 11. Naming Convention:
-    - S1, S2 = Start nodes
-    - E1, E2 = End nodes
+    - S1 = Start node (only one)
+    - E1 = End node (only one)
     - D1, D2, D3 = Decision nodes
     - P1, P2, P3 = Process nodes
     - R1, R2 = Return nodes
     - B1, B2 = Break nodes
     - C1, C2 = Continue nodes
+
+12. CRITICAL - Avoid These Errors:
+    - DO NOT define the same node twice (e.g., S1([Start]) and S1[Start])
+    - DO NOT reference undefined nodes in edges
+    - DO NOT use "NEXT" as a node - replace with actual node ID or E1
+    - DO NOT add Yes/No labels to Start or End node edges
+    - DO NOT create edges to nodes that don't exist
+    - Every node referenced in an edge MUST be defined first
 
 """
         
@@ -211,8 +222,21 @@ INSTRUCTIONS:
 2. Identify all decision nodes (type: "decision")
 3. For EACH decision node, create TWO edges: one with |Yes| label, one with |No| label
 4. Ensure all decision nodes have exactly 2 outgoing edges
-5. Generate valid Mermaid code starting with 'flowchart TD'
-6. Return ONLY the Mermaid code, no explanations, no markdown blocks
+5. Define each node ONLY ONCE (no duplicates)
+6. Ensure all nodes referenced in edges are defined
+7. Replace any "NEXT" placeholders with actual node IDs or E1
+8. Do NOT add Yes/No labels to Start or End node edges
+9. Generate valid Mermaid code starting with 'flowchart TD'
+10. Return ONLY the Mermaid code, no explanations, no markdown blocks
+
+VALIDATION CHECKLIST BEFORE RETURNING:
+- [ ] Exactly one S1([Start]) defined
+- [ ] Exactly one E1([End]) defined
+- [ ] All decision nodes have |Yes| and |No| branches
+- [ ] No duplicate node definitions
+- [ ] All nodes in edges are defined
+- [ ] No "NEXT" or undefined node references
+- [ ] Start/End nodes don't have labeled edges
 
 Generate the Mermaid flowchart now:"""
         
