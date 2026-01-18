@@ -321,7 +321,6 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
                 reconstructed_paths = []
                 
                 # Try to reconstruct the path by inserting backslashes intelligently
-                import re
                 mangled = normalized_path
                 
                 if ':' in mangled:
