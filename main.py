@@ -435,6 +435,12 @@ def main(file_path, function, sub_functions, output_dir, model, backend, ollama_
         if sub_functions:
             sub_func_list = [f.strip() for f in sub_functions.split(',')]
         
+        # Remove parentheses from function name if present (e.g., _SendUserCompletion() -> _SendUserCompletion)
+        if function:
+            function = function.strip()
+            # Remove trailing parentheses and any parameters
+            function = re.sub(r'\([^)]*\)\s*$', '', function)
+        
         # Initialize pipeline
         pipeline = CompilerPipeline(
             model=model,
