@@ -35,11 +35,13 @@ class MermaidRepair:
         if not mermaid_code.strip().startswith("flowchart"):
             mermaid_code = "flowchart TD\n" + mermaid_code
         
-        # Fix issues in order
+        # Fix issues in order (critical to fix duplicates first)
         mermaid_code = self._remove_duplicate_nodes(mermaid_code)
+        mermaid_code = self._normalize_whitespace(mermaid_code)  # Clean up before next steps
         mermaid_code = self._remove_undefined_references(mermaid_code)
         mermaid_code = self._fix_invalid_edges(mermaid_code)
         mermaid_code = self._ensure_start_end_nodes(mermaid_code)
+        mermaid_code = self._remove_duplicate_nodes(mermaid_code)  # Remove duplicates again after adding nodes
         mermaid_code = self._fix_decision_branches(mermaid_code)
         mermaid_code = self._fix_node_syntax(mermaid_code)
         mermaid_code = self._ensure_connectivity(mermaid_code)
@@ -207,27 +209,45 @@ class MermaidRepair:
         return "\n".join(new_lines)
     
     def _ensure_start_end_nodes(self, code: str) -> str:
-        """Ensure Start and End nodes exist and are properly defined."""
+        """Ensure Start and End nodes exist and are properly defined (exactly one each)."""
         lines = [l.strip() for l in code.split("\n") if l.strip()]
-        has_start = False
-        has_end = False
-        start_node_id = "S1"
-        end_node_id = "E1"
+        start_nodes = []  # List of (line_index, node_id)
+        end_nodes = []    # List of (line_index, node_id)
         
-        # Find existing Start/End nodes
-        for line in lines:
+        # Find all Start/End node definitions
+        for i, line in enumerate(lines):
+            # Check for Start node: S1([Start])
             if re.search(r'\(\[Start\]\)', line):
-                has_start = True
                 match = re.search(r'([A-Za-z0-9_]+)\(\[Start\]\)', line)
                 if match:
-                    start_node_id = match.group(1)
+                    start_nodes.append((i, match.group(1)))
+            # Check for End node: E1([End])
             if re.search(r'\(\[End\]\)', line):
-                has_end = True
                 match = re.search(r'([A-Za-z0-9_]+)\(\[End\]\)', line)
                 if match:
-                    end_node_id = match.group(1)
+                    end_nodes.append((i, match.group(1)))
         
-        new_lines = []
+        # Remove duplicate Start/End nodes - keep only the first of each
+        lines_to_remove = set()
+        if len(start_nodes) > 1:
+            # Keep first, mark rest for removal
+            for idx, (line_idx, _) in enumerate(start_nodes[1:], 1):
+                lines_to_remove.add(start_nodes[idx][0])
+        if len(end_nodes) > 1:
+            # Keep first, mark rest for removal
+            for idx, (line_idx, _) in enumerate(end_nodes[1:], 1):
+                lines_to_remove.add(end_nodes[idx][0])
+        
+        # Build new lines, removing duplicates
+        new_lines = [line for i, line in enumerate(lines) if i not in lines_to_remove]
+        
+        # Update variables
+        has_start = len(start_nodes) > 0
+        has_end = len(end_nodes) > 0
+        start_node_id = start_nodes[0][1] if start_nodes else "S1"
+        end_node_id = end_nodes[0][1] if end_nodes else "E1"
+        lines = new_lines
+        
         flowchart_found = False
         
         # Add Start node if missing
