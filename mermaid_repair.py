@@ -35,17 +35,38 @@ class MermaidRepair:
         if not mermaid_code.strip().startswith("flowchart"):
             mermaid_code = "flowchart TD\n" + mermaid_code
         
+        # Limit code size to prevent performance issues
+        # If code is extremely large, it might be malformed
+        lines = mermaid_code.split("\n")
+        if len(lines) > 1000:  # Sanity check - very large flowcharts are likely errors
+            # Try to extract just the flowchart part
+            flowchart_start = -1
+            for i, line in enumerate(lines):
+                if line.strip().startswith("flowchart"):
+                    flowchart_start = i
+                    break
+            if flowchart_start >= 0:
+                lines = lines[flowchart_start:flowchart_start+500]  # Limit to first 500 lines
+                mermaid_code = "\n".join(lines)
+        
         # Fix issues in order (critical to fix duplicates first)
-        mermaid_code = self._remove_duplicate_nodes(mermaid_code)
-        mermaid_code = self._normalize_whitespace(mermaid_code)  # Clean up before next steps
-        mermaid_code = self._remove_undefined_references(mermaid_code)
-        mermaid_code = self._fix_invalid_edges(mermaid_code)
-        mermaid_code = self._ensure_start_end_nodes(mermaid_code)
-        mermaid_code = self._remove_duplicate_nodes(mermaid_code)  # Remove duplicates again after adding nodes
-        mermaid_code = self._fix_decision_branches(mermaid_code)
-        mermaid_code = self._fix_node_syntax(mermaid_code)
-        mermaid_code = self._ensure_connectivity(mermaid_code)
-        mermaid_code = self._normalize_whitespace(mermaid_code)
+        try:
+            mermaid_code = self._remove_duplicate_nodes(mermaid_code)
+            mermaid_code = self._normalize_whitespace(mermaid_code)  # Clean up before next steps
+            mermaid_code = self._remove_undefined_references(mermaid_code)
+            mermaid_code = self._fix_invalid_edges(mermaid_code)
+            mermaid_code = self._ensure_start_end_nodes(mermaid_code)
+            mermaid_code = self._remove_duplicate_nodes(mermaid_code)  # Remove duplicates again after adding nodes
+            mermaid_code = self._fix_decision_branches(mermaid_code)
+            mermaid_code = self._fix_node_syntax(mermaid_code)
+            mermaid_code = self._ensure_connectivity(mermaid_code)
+            mermaid_code = self._normalize_whitespace(mermaid_code)
+        except Exception as e:
+            # If repair fails, return cleaned up version
+            import traceback
+            print(f"Warning: Repair error: {e}")
+            # Return at least a cleaned version
+            return self._normalize_whitespace(mermaid_code)
         
         return mermaid_code
     
