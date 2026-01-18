@@ -4,7 +4,7 @@ Generates Mermaid code from validated PseudoCodeModel IR using open-source local
 Supports Ollama and Hugging Face transformers.
 """
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import json
 import os
 import requests
@@ -242,28 +242,86 @@ Generate the Mermaid flowchart now:"""
         
         return prompt
     
+    def _check_ollama_health(self) -> Tuple[bool, str, List[str]]:
+        """
+        Check Ollama health and return status, version info, and available models.
+        
+        Returns:
+            (is_healthy, version_info, available_models)
+        """
+        # Try to connect to Ollama
+        try:
+            # Check /api/version endpoint (most reliable)
+            version_url = f"{self.ollama_base_url}/api/version"
+            version_response = requests.get(version_url, timeout=5)
+            
+            if version_response.status_code == 200:
+                version_info = version_response.json().get("version", "unknown")
+                
+                # Get available models
+                models = []
+                try:
+                    tags_url = f"{self.ollama_base_url}/api/tags"
+                    tags_response = requests.get(tags_url, timeout=5)
+                    if tags_response.status_code == 200:
+                        models_data = tags_response.json().get("models", [])
+                        models = [m.get("name", "") for m in models_data]
+                except:
+                    pass
+                
+                return True, version_info, models
+            else:
+                return False, f"HTTP {version_response.status_code}", []
+                
+        except requests.exceptions.ConnectionError:
+            return False, "Connection refused", []
+        except requests.exceptions.Timeout:
+            return False, "Connection timeout", []
+        except Exception as e:
+            return False, str(e), []
+    
     def _call_ollama(self, prompt: str) -> str:
         """Call Ollama API to generate Mermaid code."""
         try:
-            # First, check if Ollama is running
-            try:
-                health_url = f"{self.ollama_base_url}/api/tags"
-                health_response = requests.get(health_url, timeout=5)
-                if health_response.status_code == 404:
-                    # Try alternative health check
-                    health_url = f"{self.ollama_base_url}/api/version"
-                    health_response = requests.get(health_url, timeout=5)
-            except requests.exceptions.ConnectionError:
-                raise Exception(
-                    f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
-                    "Please ensure:\n"
-                    "  1. Ollama is installed (https://ollama.ai)\n"
-                    "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
-                    "  3. The model is pulled: 'ollama pull llama3.2'\n"
-                    f"  4. Ollama is accessible at {self.ollama_base_url}"
-                )
+            # First, check Ollama health and get diagnostics
+            is_healthy, version_info, available_models = self._check_ollama_health()
             
-            # Try /api/chat endpoint first (newer Ollama versions)
+            if not is_healthy:
+                error_msg = f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
+                error_msg += f"Connection status: {version_info}\n\n"
+                error_msg += "Please ensure:\n"
+                error_msg += "  1. Ollama is installed (https://ollama.ai)\n"
+                error_msg += "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
+                error_msg += f"  3. Ollama is accessible at {self.ollama_base_url}\n"
+                error_msg += "  4. Check firewall/network settings if using remote Ollama"
+                raise Exception(error_msg)
+            
+            # Check if model exists (handle version tags like :latest, :7b, etc.)
+            model_found = False
+            if available_models:
+                # Check exact match first
+                if self.model in available_models:
+                    model_found = True
+                else:
+                    # Check if model name matches without tag (e.g., llama3.2 vs llama3:latest)
+                    model_base = self.model.split(':')[0] if ':' in self.model else self.model
+                    for available_model in available_models:
+                        available_base = available_model.split(':')[0] if ':' in available_model else available_model
+                        if model_base == available_base or available_model.startswith(model_base + ':'):
+                            # Use the available model instead
+                            self.model = available_model
+                            model_found = True
+                            break
+            
+            if not model_found and available_models:
+                error_msg = f"Model '{self.model}' not found in Ollama.\n\n"
+                error_msg += f"Available models: {', '.join(available_models) if available_models else 'None'}\n\n"
+                error_msg += f"Pull the model with: ollama pull {self.model}\n"
+                error_msg += f"Or use an available model: --model {available_models[0]}"
+                raise Exception(error_msg)
+            
+            # Try /api/chat endpoint first (newer Ollama versions, >= 0.1.0)
+            # But if it fails, immediately fall back to /api/generate
             chat_url = f"{self.ollama_base_url}/api/chat"
             chat_payload = {
                 "model": self.model,
@@ -284,6 +342,7 @@ Generate the Mermaid flowchart now:"""
                 }
             }
             
+            chat_success = False
             try:
                 response = requests.post(chat_url, json=chat_payload, timeout=300)
                 if response.status_code == 200:
@@ -295,10 +354,17 @@ Generate the Mermaid flowchart now:"""
                             lines = mermaid_code.split("\n")
                             mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
                         return mermaid_code
-            except requests.exceptions.RequestException:
-                pass  # Fall back to /api/generate
+                    chat_success = True
+                elif response.status_code == 404:
+                    # /api/chat not available, will try /api/generate
+                    pass
+                else:
+                    response.raise_for_status()
+            except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
+                # If /api/chat fails, fall back to /api/generate
+                pass
             
-            # Fallback to /api/generate endpoint (older Ollama versions)
+            # Fallback to /api/generate endpoint (older Ollama versions or if /api/chat fails)
             generate_url = f"{self.ollama_base_url}/api/generate"
             generate_payload = {
                 "model": self.model,
@@ -310,52 +376,61 @@ Generate the Mermaid flowchart now:"""
                 }
             }
             
-            response = requests.post(generate_url, json=generate_payload, timeout=300)
-            response.raise_for_status()
+            try:
+                response = requests.post(generate_url, json=generate_payload, timeout=300)
+                if response.status_code == 200:
+                    result = response.json()
+                    mermaid_code = result.get("response", "").strip()
+                    
+                    # Remove markdown code blocks if present
+                    if mermaid_code.startswith("```"):
+                        lines = mermaid_code.split("\n")
+                        mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+                    
+                    return mermaid_code
+                else:
+                    response.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    # Both endpoints returned 404 - this is unusual
+                    raise Exception(
+                        f"Ollama API endpoints not found (404).\n"
+                        f"Ollama version: {version_info}\n"
+                        f"Tried endpoints: /api/chat, /api/generate\n\n"
+                        "This might mean:\n"
+                        "  1. Ollama version is incompatible - try updating: 'ollama update'\n"
+                        "  2. Ollama service is not fully started - wait a few seconds and retry\n"
+                        f"  3. Wrong base URL - current: {self.ollama_base_url}\n"
+                        f"  4. Model '{self.model}' doesn't exist - pull it with: ollama pull {self.model}\n"
+                        f"     Available models: {', '.join(available_models) if available_models else 'None'}"
+                    )
+                raise
             
-            result = response.json()
-            mermaid_code = result.get("response", "").strip()
-            
-            # Remove markdown code blocks if present
-            if mermaid_code.startswith("```"):
-                lines = mermaid_code.split("\n")
-                mermaid_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
-            
-            return mermaid_code
-            
-        except requests.exceptions.ConnectionError:
-            raise Exception(
-                f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
-                "Please ensure:\n"
-                "  1. Ollama is installed (https://ollama.ai)\n"
-                "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
-                "  3. The model is pulled: 'ollama pull llama3.2'\n"
-                f"  4. Ollama is accessible at {self.ollama_base_url}"
-            )
+        except requests.exceptions.ConnectionError as e:
+            is_healthy, version_info, available_models = self._check_ollama_health()
+            error_msg = f"Cannot connect to Ollama at {self.ollama_base_url}.\n"
+            if version_info:
+                error_msg += f"Connection status: {version_info}\n"
+            error_msg += "\nPlease ensure:\n"
+            error_msg += "  1. Ollama is installed (https://ollama.ai)\n"
+            error_msg += "  2. Ollama is running: 'ollama serve' or start Ollama service\n"
+            error_msg += f"  3. Ollama is accessible at {self.ollama_base_url}\n"
+            error_msg += "  4. Check firewall/network settings if using remote Ollama"
+            raise Exception(error_msg)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
-                # Check if model exists
-                try:
-                    tags_url = f"{self.ollama_base_url}/api/tags"
-                    tags_response = requests.get(tags_url, timeout=5)
-                    if tags_response.status_code == 200:
-                        models = tags_response.json().get("models", [])
-                        model_names = [m.get("name", "") for m in models]
-                        raise Exception(
-                            f"Model '{self.model}' not found in Ollama.\n"
-                            f"Available models: {', '.join(model_names) if model_names else 'None'}\n"
-                            f"Pull the model with: ollama pull {self.model}"
-                        )
-                except:
-                    pass
-                
+                # Get fresh diagnostics
+                is_healthy, version_info, available_models = self._check_ollama_health()
                 raise Exception(
                     f"Ollama API endpoint not found (404).\n"
+                    f"Ollama version: {version_info if is_healthy else 'unknown'}\n"
+                    f"Tried endpoints: /api/chat, /api/generate\n\n"
                     "This might mean:\n"
-                    "  1. Ollama is not running - start with 'ollama serve'\n"
-                    "  2. Wrong Ollama URL - check with: --ollama-url <url>\n"
-                    "  3. Ollama version mismatch - try updating Ollama\n"
-                    f"  4. Model '{self.model}' doesn't exist - pull it with: ollama pull {self.model}"
+                    "  1. Ollama version is incompatible - try updating: 'ollama update'\n"
+                    "  2. Ollama service is not fully started - wait a few seconds and retry\n"
+                    f"  3. Wrong base URL - current: {self.ollama_base_url}\n"
+                    f"  4. Model '{self.model}' doesn't exist - pull it with: ollama pull {self.model}\n"
+                    f"     Available models: {', '.join(available_models) if available_models else 'None'}"
                 )
             else:
                 raise Exception(f"Ollama API error ({e.response.status_code}): {str(e)}")
