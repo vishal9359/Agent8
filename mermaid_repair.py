@@ -369,6 +369,11 @@ class MermaidRepair:
     def _fix_decision_branches(self, code: str) -> str:
         """Fix decision nodes missing Yes/No branches."""
         lines = [l.strip() for l in code.split("\n") if l.strip()]
+        
+        # Limit processing to prevent hangs on very large files
+        if len(lines) > 500:
+            return code  # Skip complex repair on very large files
+        
         decision_nodes = {}
         node_edges = {}
         defined_nodes = set()
@@ -386,8 +391,11 @@ class MermaidRepair:
             if node_match:
                 defined_nodes.add(node_match.group(1))
         
-        # Find all edges from each decision node
+        # Find all edges from each decision node (limit to prevent performance issues)
+        edge_count = 0
         for line in lines:
+            if edge_count > 1000:  # Safety limit
+                break
             edge_match = re.search(r'^([A-Za-z0-9_]+)\s*-->(.*)', line)
             if edge_match:
                 from_node = edge_match.group(1)
@@ -395,6 +403,7 @@ class MermaidRepair:
                     if from_node not in node_edges:
                         node_edges[from_node] = []
                     node_edges[from_node].append(line)
+                    edge_count += 1
         
         # Fix decision nodes missing branches
         new_lines = []
