@@ -272,12 +272,49 @@ class Validator:
                 if len(edges_from_decision) < 2:
                     errors.append(f"Decision node {decision_id} must have at least 2 outgoing edges (currently has {len(edges_from_decision)})")
         
+        # Check for duplicate node definitions
+        node_definitions = {}
+        for line in mermaid_code.split("\n"):
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line.strip())
+            if node_match:
+                node_id = node_match.group(1)
+                if node_id in node_definitions:
+                    errors.append(f"Duplicate node definition: {node_id} defined multiple times")
+                else:
+                    node_definitions[node_id] = line
+        
+        # Check for undefined node references in edges
+        defined_node_ids = set(node_definitions.keys())
+        for line in mermaid_code.split("\n"):
+            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
+            if edge_match:
+                from_node = edge_match.group(1)
+                to_node = edge_match.group(2)
+                
+                if from_node not in defined_node_ids and from_node not in ['NEXT', 'END']:
+                    errors.append(f"Edge from undefined node: {from_node}")
+                if to_node not in defined_node_ids and to_node not in ['NEXT', 'END']:
+                    errors.append(f"Edge to undefined node: {to_node}")
+        
+        # Check for invalid edges from Start/End nodes
+        start_nodes = re.findall(r'([A-Za-z0-9_]+)\(\[Start\]\)', mermaid_code)
+        for start_id in start_nodes:
+            # Check for labeled edges from Start
+            invalid_edges = re.findall(rf'{re.escape(start_id)}\s*-->\|.*?\|', mermaid_code)
+            if invalid_edges:
+                errors.append(f"Start node {start_id} has labeled edges (Start should not have Yes/No branches)")
+        
+        end_nodes = re.findall(r'([A-Za-z0-9_]+)\(\[End\]\)', mermaid_code)
+        for end_id in end_nodes:
+            # Check for labeled edges to End
+            invalid_edges = re.findall(rf'-->\|.*?\|{re.escape(end_id)}', mermaid_code)
+            if invalid_edges:
+                errors.append(f"End node {end_id} has labeled incoming edges (End should not have Yes/No branches)")
+        
         # Structural validation
-        start_nodes = re.findall(r'[A-Za-z0-9_]+\(\[Start\]\)', mermaid_code)
         if len(start_nodes) != 1:
             errors.append(f"Expected exactly one Start node, found {len(start_nodes)}")
         
-        end_nodes = re.findall(r'[A-Za-z0-9_]+\(\[End\]\)', mermaid_code)
         if len(end_nodes) != 1:
             errors.append(f"Expected exactly one End node, found {len(end_nodes)}")
         

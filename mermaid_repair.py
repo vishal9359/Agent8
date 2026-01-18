@@ -5,7 +5,7 @@ Works generically for any C++ project without hardcoding.
 """
 
 import re
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Set
 
 
 class MermaidRepair:
@@ -35,7 +35,10 @@ class MermaidRepair:
         if not mermaid_code.strip().startswith("flowchart"):
             mermaid_code = "flowchart TD\n" + mermaid_code
         
-        # Fix common issues
+        # Fix issues in order
+        mermaid_code = self._remove_duplicate_nodes(mermaid_code)
+        mermaid_code = self._remove_undefined_references(mermaid_code)
+        mermaid_code = self._fix_invalid_edges(mermaid_code)
         mermaid_code = self._ensure_start_end_nodes(mermaid_code)
         mermaid_code = self._fix_decision_branches(mermaid_code)
         mermaid_code = self._fix_node_syntax(mermaid_code)
@@ -49,17 +52,137 @@ class MermaidRepair:
         code = code.strip()
         if code.startswith("```"):
             lines = code.split("\n")
-            # Remove first line if it's ```
             if lines[0].strip() == "```" or lines[0].strip().startswith("```"):
                 lines = lines[1:]
-            # Remove last line if it's ```
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             code = "\n".join(lines)
         return code.strip()
     
+    def _remove_duplicate_nodes(self, code: str) -> str:
+        """Remove duplicate node definitions, keeping the first one."""
+        lines = code.split("\n")
+        seen_nodes = {}  # node_id -> (line_index, line_content)
+        new_lines = []
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check if this is a node declaration
+            # Pattern: ID[text] or ID{text} or ID([text])
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
+            if node_match:
+                node_id = node_match.group(1)
+                
+                # Check if we've seen this node before
+                if node_id in seen_nodes:
+                    # This is a duplicate - skip it
+                    # But check if the new one is better (e.g., Start/End should be ([...]))
+                    old_line = seen_nodes[node_id][1]
+                    if re.search(r'\(\[(Start|End)\]\)', line) and not re.search(r'\(\[(Start|End)\]\)', old_line):
+                        # New definition is better (Start/End format), replace
+                        old_index = seen_nodes[node_id][0]
+                        new_lines[old_index - (len(new_lines) - len([l for l in lines[:i] if l.strip()]))] = line
+                    # Otherwise, skip this duplicate
+                    continue
+                else:
+                    # First time seeing this node
+                    seen_nodes[node_id] = (len(new_lines), line)
+            
+            new_lines.append(line)
+        
+        return "\n".join(new_lines)
+    
+    def _remove_undefined_references(self, code: str) -> str:
+        """Remove edges that reference undefined nodes."""
+        lines = code.split("\n")
+        
+        # Collect all defined node IDs
+        defined_nodes = set()
+        for line in lines:
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line.strip())
+            if node_match:
+                defined_nodes.add(node_match.group(1))
+        
+        # Remove edges to undefined nodes
+        new_lines = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check if this is an edge
+            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
+            if edge_match:
+                from_node = edge_match.group(1)
+                to_node = edge_match.group(2)
+                
+                # Skip if target node is undefined (unless it's a special keyword)
+                if to_node not in defined_nodes and to_node not in ['NEXT', 'END']:
+                    # Try to find a valid target
+                    # If it's NEXT or END, replace with End node
+                    if to_node == 'NEXT' or to_node == 'END':
+                        end_nodes = [n for n in defined_nodes if re.search(r'E\d+', n)]
+                        if end_nodes:
+                            line = re.sub(rf'-->(?:.*?\|)?\s*{to_node}\b', f'--> {end_nodes[0]}', line)
+                        else:
+                            # Skip this edge if no End node exists
+                            continue
+                    else:
+                        # Skip edges to undefined nodes
+                        continue
+            
+            new_lines.append(line)
+        
+        return "\n".join(new_lines)
+    
+    def _fix_invalid_edges(self, code: str) -> str:
+        """Fix invalid edges (e.g., Start/End nodes with Yes/No branches)."""
+        lines = code.split("\n")
+        new_lines = []
+        
+        # Find Start and End nodes
+        start_nodes = set()
+        end_nodes = set()
+        
+        for line in lines:
+            if re.search(r'\(\[Start\]\)', line):
+                match = re.search(r'([A-Za-z0-9_]+)\(\[Start\]\)', line)
+                if match:
+                    start_nodes.add(match.group(1))
+            if re.search(r'\(\[End\]\)', line):
+                match = re.search(r'([A-Za-z0-9_]+)\(\[End\]\)', line)
+                if match:
+                    end_nodes.add(match.group(1))
+        
+        # Fix invalid edges
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check for edges from Start with Yes/No labels
+            for start_id in start_nodes:
+                if line.startswith(start_id + " -->") and "|" in line:
+                    # Remove the label, keep just the edge
+                    line = re.sub(rf'{re.escape(start_id)}\s*-->\|.*?\|', f'{start_id} -->', line)
+            
+            # Check for edges to End with Yes/No labels
+            for end_id in end_nodes:
+                if f'-->|' in line and end_id in line:
+                    # Check if target is End
+                    if re.search(rf'-->\|.*?\|{re.escape(end_id)}', line):
+                        # Remove the label
+                        line = re.sub(r'-->\|.*?\|', '-->', line)
+            
+            new_lines.append(line)
+        
+        return "\n".join(new_lines)
+    
     def _ensure_start_end_nodes(self, code: str) -> str:
-        """Ensure Start and End nodes exist."""
+        """Ensure Start and End nodes exist and are properly defined."""
         lines = [l.strip() for l in code.split("\n") if l.strip()]
         has_start = False
         has_end = False
@@ -84,23 +207,19 @@ class MermaidRepair:
         
         # Add Start node if missing
         if not has_start:
-            # Find first node that's not Start/End to connect from
             first_node = self._find_first_node(lines)
             start_line = f"{start_node_id}([Start])"
             
             for i, line in enumerate(lines):
                 new_lines.append(line)
-                # Insert Start after flowchart declaration
                 if not flowchart_found and line.strip().startswith("flowchart"):
                     flowchart_found = True
                     new_lines.append(start_line)
                     if first_node:
-                        # Check if edge already exists
                         edge_exists = any(f"{start_node_id} -->" in l for l in lines)
                         if not edge_exists:
                             new_lines.append(f"{start_node_id} --> {first_node}")
                     else:
-                        # No first node, connect Start to End
                         new_lines.append(f"{start_node_id} --> {end_node_id}")
         else:
             new_lines = list(lines)
@@ -108,17 +227,14 @@ class MermaidRepair:
         # Add End node if missing
         if not has_end:
             end_line = f"{end_node_id}([End])"
-            # Find nodes that should connect to End (returns, final processes)
             nodes_to_end = self._find_nodes_needing_end(new_lines)
             
-            # Add End node
             if end_line not in "\n".join(new_lines):
                 new_lines.append(end_line)
             
-            # Connect nodes to End
             for node_id in nodes_to_end:
                 edge = f"{node_id} --> {end_node_id}"
-                edge_exists = any(edge in l or f"{node_id} -->" in l for l in new_lines)
+                edge_exists = any(edge in l or (f"{node_id} -->" in l and end_node_id in l) for l in new_lines)
                 if not edge_exists:
                     new_lines.append(edge)
         
@@ -127,8 +243,7 @@ class MermaidRepair:
     def _find_first_node(self, lines: List[str]) -> Optional[str]:
         """Find the first node in the flowchart (excluding Start/End)."""
         for line in lines:
-            # Look for node declarations: ID[text] or ID{text} or ID([text])
-            match = re.search(r'([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
+            match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line.strip())
             if match:
                 node_id = match.group(1)
                 if not re.search(r'Start|End', line, re.IGNORECASE):
@@ -144,15 +259,13 @@ class MermaidRepair:
         
         # Collect all nodes and their edges
         for line in lines:
-            # Find node declarations
-            node_match = re.search(r'([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line.strip())
             if node_match:
                 node_id = node_match.group(1)
                 if not re.search(r'Start|End', line, re.IGNORECASE):
                     all_nodes.add(node_id)
             
-            # Find edges: node1 --> node2
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)', line)
+            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
             if edge_match:
                 from_node = edge_match.group(1)
                 to_node = edge_match.group(2)
@@ -166,15 +279,14 @@ class MermaidRepair:
                 if match:
                     nodes_to_end.append(match.group(1))
         
-        # Find nodes without outgoing edges (except Start/End)
+        # Find nodes without outgoing edges
         for node in all_nodes:
             if (node not in nodes_with_outgoing and 
                 node not in nodes_to_end):
                 nodes_to_end.append(node)
         
-        # If no nodes found, use the last process node
+        # Fallback
         if not nodes_to_end and all_nodes:
-            # Get process nodes (not decisions, not returns)
             process_nodes = []
             for line in lines:
                 if re.search(r'\[', line) and not re.search(r'return|Start|End', line, re.IGNORECASE):
@@ -184,27 +296,33 @@ class MermaidRepair:
             if process_nodes:
                 nodes_to_end.append(process_nodes[-1])
             else:
-                # Fallback: use any node
                 nodes_to_end.append(list(all_nodes)[0] if all_nodes else "S1")
         
         return nodes_to_end
     
     def _fix_decision_branches(self, code: str) -> str:
         """Fix decision nodes missing Yes/No branches."""
-        lines = code.split("\n")
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
         decision_nodes = {}
         node_edges = {}
+        defined_nodes = set()
         
-        # Find all decision nodes
+        # Find all decision nodes and defined nodes
         for line in lines:
-            match = re.search(r'([A-Za-z0-9_]+)\{.*?\}', line)
+            match = re.search(r'^([A-Za-z0-9_]+)\{.*?\}', line)
             if match:
                 decision_id = match.group(1)
                 decision_nodes[decision_id] = line
+                defined_nodes.add(decision_id)
+            
+            # Also collect other node types
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\(\[)', line)
+            if node_match:
+                defined_nodes.add(node_match.group(1))
         
         # Find all edges from each decision node
         for line in lines:
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(.*)', line)
+            edge_match = re.search(r'^([A-Za-z0-9_]+)\s*-->(.*)', line)
             if edge_match:
                 from_node = edge_match.group(1)
                 if from_node in decision_nodes:
@@ -215,12 +333,21 @@ class MermaidRepair:
         # Fix decision nodes missing branches
         new_lines = []
         nodes_added = set()
+        end_node_id = "E1"
+        
+        # Find End node
+        for line in lines:
+            if re.search(r'\(\[End\]\)', line):
+                match = re.search(r'([A-Za-z0-9_]+)\(\[End\]\)', line)
+                if match:
+                    end_node_id = match.group(1)
+                    break
         
         for line in lines:
             new_lines.append(line)
             
             # Check if this is a decision node declaration
-            match = re.search(r'([A-Za-z0-9_]+)\{.*?\}', line)
+            match = re.search(r'^([A-Za-z0-9_]+)\{.*?\}', line)
             if match:
                 decision_id = match.group(1)
                 
@@ -235,47 +362,37 @@ class MermaidRepair:
                     if re.search(r'\|(Yes|YES|True|TRUE)\|', edge):
                         has_yes = True
                         target_match = re.search(r'-->\|.*?\|([A-Za-z0-9_]+)', edge)
-                        if target_match:
+                        if target_match and target_match.group(1) in defined_nodes:
                             yes_target = target_match.group(1)
                     elif re.search(r'\|(No|NO|False|FALSE)\|', edge):
                         has_no = True
                         target_match = re.search(r'-->\|.*?\|([A-Za-z0-9_]+)', edge)
-                        if target_match:
+                        if target_match and target_match.group(1) in defined_nodes:
                             no_target = target_match.group(1)
                 
                 # Fix missing branches
                 if decision_id not in nodes_added:
                     nodes_added.add(decision_id)
                     
-                    # Find next node after this decision (for No branch if missing)
+                    # Find valid target for missing branches
                     if not no_target:
-                        # Look for next node in the code
-                        next_node = self._find_next_node_after(lines, line)
-                        if not next_node:
-                            # Use End node
-                            end_match = re.search(r'([A-Za-z0-9_]+)\(\[End\]\)', code)
-                            if end_match:
-                                next_node = end_match.group(1)
-                            else:
-                                next_node = "E1"
-                        
+                        next_node = self._find_next_valid_node_after(lines, line, defined_nodes, end_node_id)
                         if not has_no:
                             new_lines.append(f"{decision_id} -->|No| {next_node}")
                             has_no = True
                             no_target = next_node
                     
-                    # For Yes branch, find the first node after decision in original flow
                     if not has_yes:
-                        # Look for unlabeled edge or first process after decision
-                        yes_target = self._find_yes_branch_target(lines, decision_id, no_target)
+                        yes_target = self._find_yes_branch_target(lines, decision_id, no_target, defined_nodes)
                         if not yes_target:
-                            yes_target = no_target  # Fallback
+                            yes_target = no_target
                         new_lines.append(f"{decision_id} -->|Yes| {yes_target}")
         
         return "\n".join(new_lines)
     
-    def _find_next_node_after(self, lines: List[str], current_line: str) -> Optional[str]:
-        """Find the next node declaration after current line."""
+    def _find_next_valid_node_after(self, lines: List[str], current_line: str, 
+                                    defined_nodes: Set[str], end_node_id: str) -> str:
+        """Find the next valid node after current line."""
         current_index = -1
         for i, line in enumerate(lines):
             if line == current_line:
@@ -284,27 +401,33 @@ class MermaidRepair:
         
         if current_index >= 0:
             for i in range(current_index + 1, len(lines)):
-                match = re.search(r'([A-Za-z0-9_]+)(?:\[|\{|\(\[)', lines[i])
+                match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', lines[i].strip())
                 if match:
                     node_id = match.group(1)
-                    if not re.search(r'Start|End', lines[i], re.IGNORECASE):
+                    if node_id in defined_nodes and not re.search(r'Start|End', lines[i], re.IGNORECASE):
                         return node_id
         
-        return None
+        return end_node_id
     
-    def _find_yes_branch_target(self, lines: List[str], decision_id: str, no_target: str) -> Optional[str]:
+    def _find_yes_branch_target(self, lines: List[str], decision_id: str, no_target: str,
+                                defined_nodes: Set[str]) -> Optional[str]:
         """Find target for Yes branch of a decision node."""
         # Look for unlabeled edge from this decision
         for line in lines:
-            if line.strip().startswith(decision_id + " -->"):
-                # Check if it's unlabeled
-                if "|" not in line:
-                    target_match = re.search(r'-->\s*([A-Za-z0-9_]+)', line)
-                    if target_match:
-                        return target_match.group(1)
+            if line.strip().startswith(decision_id + " -->") and "|" not in line:
+                target_match = re.search(r'-->\s*([A-Za-z0-9_]+)', line)
+                if target_match and target_match.group(1) in defined_nodes:
+                    return target_match.group(1)
         
         # Look for first process node after decision
-        return self._find_next_node_after(lines, f"{decision_id}{{")
+        for line in lines:
+            if decision_id in line:
+                continue
+            match = re.search(r'^([A-Za-z0-9_]+)\[', line.strip())
+            if match and match.group(1) in defined_nodes:
+                return match.group(1)
+        
+        return no_target if no_target in defined_nodes else None
     
     def _fix_node_syntax(self, code: str) -> str:
         """Fix common node syntax errors."""
@@ -312,40 +435,49 @@ class MermaidRepair:
         new_lines = []
         
         for line in lines:
-            # Fix invalid syntax like start([Start])
+            line = line.strip()
+            if not line:
+                continue
+            # Fix invalid syntax
             line = re.sub(r'start\(\[Start\]\)', 'S1([Start])', line, flags=re.IGNORECASE)
             line = re.sub(r'end\(\[End\]\)', 'E1([End])', line, flags=re.IGNORECASE)
-            
             new_lines.append(line)
         
         return "\n".join(new_lines)
     
     def _ensure_connectivity(self, code: str) -> str:
-        """Ensure all nodes are connected."""
-        lines = code.split("\n")
+        """Ensure all nodes are connected properly."""
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
         all_nodes = set()
         nodes_with_incoming = set()
         nodes_with_outgoing = set()
+        start_node_id = "S1"
+        end_node_id = "E1"
         
         # Collect all nodes
         for line in lines:
-            match = re.search(r'([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
+            match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
             if match:
                 all_nodes.add(match.group(1))
+                if re.search(r'\(\[Start\]\)', line):
+                    start_node_id = match.group(1)
+                if re.search(r'\(\[End\]\)', line):
+                    end_node_id = match.group(1)
             
             # Track edges
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)', line)
+            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
             if edge_match:
-                nodes_with_outgoing.add(edge_match.group(1))
-                nodes_with_outgoing.add(edge_match.group(2))  # Also mark target as having incoming
-                nodes_with_incoming.add(edge_match.group(2))
+                from_node = edge_match.group(1)
+                to_node = edge_match.group(2)
+                if from_node in all_nodes and to_node in all_nodes:
+                    nodes_with_outgoing.add(from_node)
+                    nodes_with_incoming.add(to_node)
         
         # Ensure Start has outgoing edge
-        start_nodes = [n for n in all_nodes if re.search(r'S\d+', n)]
-        if start_nodes and start_nodes[0] not in nodes_with_outgoing:
+        if start_node_id in all_nodes and start_node_id not in nodes_with_outgoing:
             first_node = self._find_first_node(lines)
-            if first_node:
-                lines.append(f"{start_nodes[0]} --> {first_node}")
+            if first_node and first_node in all_nodes:
+                lines.append(f"{start_node_id} --> {first_node}")
         
         return "\n".join(lines)
     
@@ -354,7 +486,7 @@ class MermaidRepair:
         lines = []
         for line in code.split("\n"):
             line = line.strip()
-            if line:  # Skip empty lines
+            if line:
                 lines.append(line)
         return "\n".join(lines)
     

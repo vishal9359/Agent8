@@ -153,10 +153,9 @@ class CompilerPipeline:
                     max_retries=1
                 )
                 
-                # Try to repair common issues automatically
-                if attempt > 1 or validation_errors:  # Repair on retries or if we had errors
-                    click.echo("  Applying automatic repairs...")
-                    mermaid_code = self.mermaid_repair.repair(mermaid_code)
+                # Always try to repair common issues automatically
+                click.echo("  Applying automatic repairs...")
+                mermaid_code = self.mermaid_repair.repair(mermaid_code)
                 
                 # Validate Mermaid
                 is_valid, errors = self.validator.validate_mermaid(mermaid_code)
