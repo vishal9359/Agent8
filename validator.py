@@ -286,15 +286,34 @@ class Validator:
         # Check for undefined node references in edges
         defined_node_ids = set(node_definitions.keys())
         for line in mermaid_code.split("\n"):
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Parse edge with label: NODE1 -->|label| NODE2
+            # Or without label: NODE1 --> NODE2
+            # Pattern: node_id -->|optional_label| target_node_id
+            edge_match = re.search(r'^([A-Za-z0-9_]+)\s*-->(?:\|.*?\|)?\s*([A-Za-z0-9_]+)', line)
             if edge_match:
                 from_node = edge_match.group(1)
                 to_node = edge_match.group(2)
                 
-                if from_node not in defined_node_ids and from_node not in ['NEXT', 'END']:
+                # Skip if "from_node" or "to_node" is actually a label keyword
+                label_keywords = {'Yes', 'No', 'YES', 'NO', 'True', 'False', 'TRUE', 'FALSE', 
+                                 'NEXT', 'END', 'case', 'default', 'Case', 'Default'}
+                
+                if from_node not in defined_node_ids and from_node not in label_keywords:
                     errors.append(f"Edge from undefined node: {from_node}")
-                if to_node not in defined_node_ids and to_node not in ['NEXT', 'END']:
-                    errors.append(f"Edge to undefined node: {to_node}")
+                if to_node not in defined_node_ids and to_node not in label_keywords:
+                    # Check if this might be a label - look for the actual target after the label
+                    # Pattern: NODE -->|label| TARGET
+                    label_match = re.search(r'-->\|.*?\|([A-Za-z0-9_]+)', line)
+                    if label_match:
+                        actual_target = label_match.group(1)
+                        if actual_target not in defined_node_ids and actual_target not in label_keywords:
+                            errors.append(f"Edge to undefined node: {actual_target}")
+                    else:
+                        errors.append(f"Edge to undefined node: {to_node}")
         
         # Check for invalid edges from Start/End nodes
         start_nodes = re.findall(r'([A-Za-z0-9_]+)\(\[Start\]\)', mermaid_code)

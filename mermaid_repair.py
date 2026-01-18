@@ -60,79 +60,104 @@ class MermaidRepair:
         return code.strip()
     
     def _remove_duplicate_nodes(self, code: str) -> str:
-        """Remove duplicate node definitions, keeping the first one."""
-        lines = code.split("\n")
-        seen_nodes = {}  # node_id -> (line_index, line_content)
+        """Remove duplicate node definitions, keeping the best one."""
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
+        seen_nodes = {}  # node_id -> (line_index, line_content, is_start_end_format)
         new_lines = []
+        lines_to_skip = set()
         
+        # First pass: identify all node definitions and mark duplicates
         for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-            
             # Check if this is a node declaration
-            # Pattern: ID[text] or ID{text} or ID([text])
+            # Pattern: ID[text] or ID{text} or ID([text]) or ID([Start]) or ID([End])
             node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
             if node_match:
                 node_id = node_match.group(1)
+                is_start_end = bool(re.search(r'\(\[(Start|End)\]\)', line))
                 
-                # Check if we've seen this node before
                 if node_id in seen_nodes:
-                    # This is a duplicate - skip it
-                    # But check if the new one is better (e.g., Start/End should be ([...]))
-                    old_line = seen_nodes[node_id][1]
-                    if re.search(r'\(\[(Start|End)\]\)', line) and not re.search(r'\(\[(Start|End)\]\)', old_line):
-                        # New definition is better (Start/End format), replace
-                        old_index = seen_nodes[node_id][0]
-                        new_lines[old_index - (len(new_lines) - len([l for l in lines[:i] if l.strip()]))] = line
-                    # Otherwise, skip this duplicate
-                    continue
+                    # Duplicate found - decide which one to keep
+                    old_index, old_line, old_is_start_end = seen_nodes[node_id]
+                    
+                    # Prefer Start/End format: ([Start]) or ([End])
+                    if is_start_end and not old_is_start_end:
+                        # New one is better - mark old one for removal
+                        lines_to_skip.add(old_index)
+                        seen_nodes[node_id] = (i, line, is_start_end)
+                    else:
+                        # Old one is better or equal - mark new one for removal
+                        lines_to_skip.add(i)
                 else:
                     # First time seeing this node
-                    seen_nodes[node_id] = (len(new_lines), line)
-            
-            new_lines.append(line)
+                    seen_nodes[node_id] = (i, line, is_start_end)
+        
+        # Second pass: build new lines, skipping duplicates
+        for i, line in enumerate(lines):
+            if i not in lines_to_skip:
+                new_lines.append(line)
         
         return "\n".join(new_lines)
     
     def _remove_undefined_references(self, code: str) -> str:
         """Remove edges that reference undefined nodes."""
-        lines = code.split("\n")
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
         
         # Collect all defined node IDs
         defined_nodes = set()
         for line in lines:
-            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line.strip())
+            node_match = re.search(r'^([A-Za-z0-9_]+)(?:\[|\{|\(\[)', line)
             if node_match:
                 defined_nodes.add(node_match.group(1))
+        
+        # Keywords that are not nodes (labels, etc.)
+        label_keywords = {'Yes', 'No', 'YES', 'NO', 'True', 'False', 'TRUE', 'FALSE', 
+                         'NEXT', 'END', 'case', 'default', 'Case', 'Default'}
         
         # Remove edges to undefined nodes
         new_lines = []
         for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+            # Parse edge properly: NODE1 -->|label| NODE2 or NODE1 --> NODE2
+            # Find the actual target node after any label
+            target_node = None
+            from_node = None
             
-            # Check if this is an edge
-            edge_match = re.search(r'([A-Za-z0-9_]+)\s*-->(?:.*?\|)?\s*([A-Za-z0-9_]+)', line)
-            if edge_match:
-                from_node = edge_match.group(1)
-                to_node = edge_match.group(2)
-                
-                # Skip if target node is undefined (unless it's a special keyword)
-                if to_node not in defined_nodes and to_node not in ['NEXT', 'END']:
-                    # Try to find a valid target
-                    # If it's NEXT or END, replace with End node
-                    if to_node == 'NEXT' or to_node == 'END':
+            # Pattern 1: NODE -->|label| TARGET
+            edge_with_label = re.search(r'^([A-Za-z0-9_]+)\s*-->\|.*?\|([A-Za-z0-9_]+)', line)
+            if edge_with_label:
+                from_node = edge_with_label.group(1)
+                target_node = edge_with_label.group(2)
+            else:
+                # Pattern 2: NODE --> TARGET (no label)
+                edge_no_label = re.search(r'^([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)', line)
+                if edge_no_label:
+                    from_node = edge_no_label.group(1)
+                    target_node = edge_no_label.group(2)
+            
+            if from_node and target_node:
+                # Check if target is a label keyword (not a node)
+                if target_node in label_keywords:
+                    # Replace label keywords with End node if appropriate
+                    if target_node in ['NEXT', 'END']:
                         end_nodes = [n for n in defined_nodes if re.search(r'E\d+', n)]
                         if end_nodes:
-                            line = re.sub(rf'-->(?:.*?\|)?\s*{to_node}\b', f'--> {end_nodes[0]}', line)
+                            line = re.sub(rf'-->\s*\|.*?\|\s*{target_node}\b', f'--> {end_nodes[0]}', line)
+                            line = re.sub(rf'-->\s*{target_node}\b', f'--> {end_nodes[0]}', line)
                         else:
-                            # Skip this edge if no End node exists
+                            # Skip this edge if no End node exists yet
                             continue
                     else:
-                        # Skip edges to undefined nodes
+                        # Label keywords like Yes/No are fine in edge labels
+                        new_lines.append(line)
                         continue
+                
+                # Check if nodes are defined
+                if from_node not in defined_nodes and from_node not in label_keywords:
+                    # Skip edges from undefined nodes
+                    continue
+                
+                if target_node not in defined_nodes and target_node not in label_keywords:
+                    # Skip edges to undefined nodes
+                    continue
             
             new_lines.append(line)
         
