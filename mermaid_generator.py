@@ -244,7 +244,7 @@ INSTRUCTIONS:
      * Example: "int status = POS_IO_STATUS_SUCCESS" -> P1[status = POS_IO_STATUS_SUCCESS]
    - If type is "decision": Create a decision node with the condition only
      * Extract just the condition, not the full if statement
-     * Example: "if (unlikely(_GetErrorCount() > 0))" -> D1{_GetErrorCount() > 0}
+     * Example: "if (unlikely(_GetErrorCount() > 0))" -> D1{{_GetErrorCount() > 0}}
    - If type is "loop": Create a loop decision node with condition only
 3. For EACH decision node, create TWO edges: one with |Yes| label, one with |No| label
 4. Ensure all decision nodes have exactly 2 outgoing edges
