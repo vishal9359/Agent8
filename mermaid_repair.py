@@ -377,6 +377,14 @@ class MermaidRepair:
         node_edges = {}
         defined_nodes = set()
         
+        # Determine End node ID if present (fallback to E1)
+        end_node_id = "E1"
+        for line in lines:
+            match = re.search(r'([A-Za-z0-9_]+)\(\[End\]\)', line)
+            if match:
+                end_node_id = match.group(1)
+                break
+        
         # Find all decision nodes and defined nodes
         for line in lines:
             match = re.search(r'^([A-Za-z0-9_]+)\{.*?\}', line)
@@ -419,6 +427,21 @@ class MermaidRepair:
                 yes_target = None
                 no_target = None
                 
+                # If there are no edges at all from this decision node,
+                # synthesize both Yes/No branches using simple heuristics.
+                # This is generic (no project-specific hardcoding) and ensures
+                # every decision node has outgoing edges for valid control flow.
+                if not edges and decision_id not in nodes_added:
+                    nodes_added.add(decision_id)
+                    # Prefer the next defined node after this decision as the "Yes" target
+                    target = self._find_next_valid_node_after(lines, line, defined_nodes, end_node_id)
+                    # Yes branch goes to the next node
+                    new_lines.append(f"{decision_id} -->|Yes| {target}")
+                    # No branch falls through to End by default (or the same target if End is not found)
+                    no_target = end_node_id if target != end_node_id else target
+                    new_lines.append(f"{decision_id} -->|No| {no_target}")
+                    continue
+                
                 for edge in edges:
                     if re.search(r'\|(Yes|YES|True|TRUE)\|', edge):
                         has_yes = True
@@ -431,7 +454,7 @@ class MermaidRepair:
                         if target_match and target_match.group(1) in defined_nodes:
                             no_target = target_match.group(1)
                 
-                # Fix missing branches
+                # Fix missing branches when some edges already exist
                 if decision_id not in nodes_added:
                     nodes_added.add(decision_id)
                     

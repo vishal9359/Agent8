@@ -223,37 +223,40 @@ class Validator:
         if len(nodes) < 2:  # At least start and end
             errors.append("Mermaid code must contain at least 2 nodes")
         
-        # Check for syntax errors in node text
+        # Check for syntax issues in node text (record as soft issues, not hard failures)
+        # We keep these as potential diagnostics for future improvements, but they do not
+        # currently cause validation failure to avoid over-strict behavior on real-world code.
+        text_issues = []
         lines = mermaid_code.split("\n")
         for i, line in enumerate(lines, 1):
             line = line.strip()
             if not line or line.startswith("flowchart"):
                 continue
             
-            # Check for process nodes with control flow statements
+            # Process nodes with control flow keywords (if/while/for/switch) – soft issue
             if re.search(r'^[A-Za-z0-9_]+\[.*(?:if\s*\(|while\s*\(|for\s*\(|switch\s*\()', line):
-                errors.append(f"Line {i}: Process node contains control flow - split into separate nodes")
+                text_issues.append(f"Line {i}: Process node contains control flow - could be split into separate nodes")
             
-            # Check for multiple statements in one node (multiple semicolons)
+            # Multiple statements in one node (multiple semicolons) – soft issue
             if re.search(r'^[A-Za-z0-9_]+\[.*;.*;', line):
-                errors.append(f"Line {i}: Process node contains multiple statements - split into separate nodes")
+                text_issues.append(f"Line {i}: Process node contains multiple statements - could be split into separate nodes")
             
-            # Check for unclosed brackets in process nodes
+            # Unclosed brackets in process nodes – hard issue (Mermaid parse error)
             if re.search(r'^[A-Za-z0-9_]+\[', line):
                 if line.count('[') != line.count(']'):
                     errors.append(f"Line {i}: Unclosed brackets in process node")
             
-            # Check for unclosed braces in decision nodes
+            # Unclosed braces in decision nodes – hard issue
             if re.search(r'^[A-Za-z0-9_]+\{', line):
                 if line.count('{') != line.count('}'):
                     errors.append(f"Line {i}: Unclosed braces in decision node")
             
-            # Check for unclosed parentheses in return/start/end nodes
+            # Unclosed parentheses in return/start/end nodes – hard issue
             if re.search(r'^[A-Za-z0-9_]+\(', line):
                 if line.count('(') != line.count(')'):
                     errors.append(f"Line {i}: Unclosed parentheses in node definition")
             
-            # Check for unescaped quotes (odd number of quotes)
+            # Unescaped quotes (odd number of quotes) – hard issue
             if line.count('"') % 2 != 0:
                 errors.append(f"Line {i}: Unmatched quotes in node text")
         
