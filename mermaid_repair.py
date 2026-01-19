@@ -39,6 +39,8 @@ class MermaidRepair:
         # First, ensure that each Mermaid statement is on its own line.
         # Sometimes the LLM concatenates node declarations and edges on the same line,
         # which Mermaid's parser rejects (e.g. `S1([Start])D1{cond} D1 -->|Yes| P1`).
+        # This must run regardless of whether the original code already started
+        # with `flowchart TD`, so it is intentionally outside the conditional above.
         mermaid_code = self._split_compound_statements(mermaid_code)
         
         # STRICT SIZE LIMIT - Skip expensive repairs on large files
