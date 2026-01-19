@@ -155,22 +155,15 @@ class CompilerPipeline:
                 )
                 
                 # Always try to repair common issues automatically
-                # Run repair multiple times to catch cascading issues
+                # Single pass only - repair is optimized and multiple passes are expensive
                 click.echo("  Applying automatic repairs...", nl=False)
-                for repair_attempt in range(3):  # Try up to 3 repair passes
+                try:
                     old_code = mermaid_code
-                    try:
-                        mermaid_code = self.mermaid_repair.repair(mermaid_code)
-                        if old_code == mermaid_code:  # No changes made
-                            click.echo(" ✓")
-                            break
-                        click.echo(".", nl=False)
-                    except Exception as e:
-                        click.echo(f" ✗ (repair error: {str(e)})")
-                        # Continue with original code if repair fails
-                        break
-                else:
+                    mermaid_code = self.mermaid_repair.repair(mermaid_code)
                     click.echo(" ✓")
+                except Exception as e:
+                    click.echo(f" ✗ (skipped: {str(e)[:50]})")
+                    # Continue with original code if repair fails
                 
                 # Validate Mermaid
                 is_valid, errors = self.validator.validate_mermaid(mermaid_code)
