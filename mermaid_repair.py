@@ -491,7 +491,7 @@ class MermaidRepair:
         return no_target if no_target in defined_nodes else None
     
     def _fix_node_syntax(self, code: str) -> str:
-        """Fix common node syntax errors."""
+        """Fix common node syntax errors including text content."""
         lines = code.split("\n")
         new_lines = []
         
@@ -499,9 +499,47 @@ class MermaidRepair:
             line = line.strip()
             if not line:
                 continue
-            # Fix invalid syntax
+            
+            # Fix invalid syntax for Start/End
             line = re.sub(r'start\(\[Start\]\)', 'S1([Start])', line, flags=re.IGNORECASE)
             line = re.sub(r'end\(\[End\]\)', 'E1([End])', line, flags=re.IGNORECASE)
+            
+            # Fix process nodes with control flow - extract main statement
+            # Pattern: P1[complex text with if/while/for]
+            process_match = re.search(r'^([A-Za-z0-9_]+)\[(.*?)\]', line)
+            if process_match:
+                node_id = process_match.group(1)
+                text = process_match.group(2)
+                
+                # If text contains control flow, try to extract the main statement
+                if re.search(r'\b(if|while|for|switch)\s*\(', text):
+                    # Try to extract the first simple statement before control flow
+                    # Or extract the main action after control flow
+                    simple_match = re.search(r'^([^;{]+?)(?:\s*;|\s*\{)', text)
+                    if simple_match:
+                        text = simple_match.group(1).strip()
+                    else:
+                        # If we can't extract, use a simplified version
+                        text = re.sub(r'\s*(if|while|for|switch)\s*\(.*', '', text).strip()
+                        if not text or len(text) > 100:
+                            text = "process"
+                
+                # Remove multiple statements (keep only first)
+                if ';' in text and text.count(';') > 1:
+                    parts = text.split(';')
+                    text = parts[0].strip() + ';'
+                
+                # Fix unclosed quotes
+                if text.count('"') % 2 != 0:
+                    # Odd number of quotes - try to fix
+                    text = text.replace('"', "'")  # Replace with single quotes
+                
+                # Limit text length
+                if len(text) > 100:
+                    text = text[:97] + "..."
+                
+                line = f"{node_id}[{text}]"
+            
             new_lines.append(line)
         
         return "\n".join(new_lines)

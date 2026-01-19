@@ -104,14 +104,25 @@ CRITICAL RULES - READ CAREFULLY:
 
 1. Graph Type: Always start with 'flowchart TD'
 
-2. Node Types:
+2. Node Types and Syntax:
    - Start: S1([Start])
    - End: E1([End])
-   - Process: P1[statement]
-   - Decision: D1{condition}
+   - Process: P1[statement] - ONE simple statement per node, no control flow
+   - Decision: D1{condition} - condition only, no statements
    - Return: R1([return value])
    - Break: B1([break])
    - Continue: C1([continue])
+   
+   CRITICAL TEXT RULES:
+   - Text inside nodes MUST be simple and clean
+   - DO NOT put multiple statements in one process node
+   - DO NOT put control flow (if/while/for) inside process nodes
+   - DO NOT put semicolons or complex expressions in node text
+   - If text contains quotes, use single quotes or escape them
+   - Keep node text short and readable (max 50 characters recommended)
+   - Example CORRECT: P1[status = POS_IO_STATUS_SUCCESS]
+   - Example WRONG: P1[int status == POS_IO_STATUS_SUCCESS; if (unlikely(_GetErrorCount() > 0)) {status = POS_IO_STATUS_FAIL;}]
+   - For complex logic, split into multiple process nodes or use decision nodes
 
 3. DECISION NODES - MOST IMPORTANT:
    EVERY decision node MUST have EXACTLY TWO outgoing edges:
@@ -190,6 +201,11 @@ CRITICAL RULES - READ CAREFULLY:
     - DO NOT add Yes/No labels to Start or End node edges
     - DO NOT create edges to nodes that don't exist
     - Every node referenced in an edge MUST be defined first
+    - DO NOT put multiple statements in one process node - split them
+    - DO NOT put control flow (if/while/for) inside process nodes - use decision/loop nodes
+    - DO NOT put unescaped quotes or special characters in node text
+    - DO NOT put semicolons, braces, or complex expressions in node text
+    - Keep process node text simple: one assignment, one function call, or one simple operation
 
 """
         
@@ -219,15 +235,27 @@ Pseudo Code Model:
 
 INSTRUCTIONS:
 1. Analyze the pseudo code model carefully
-2. Identify all decision nodes (type: "decision")
+2. For each step in the model:
+   - If type is "process": Create a simple process node with ONE statement only
+     * Extract the main action from the text
+     * Remove control flow statements (if/while/for)
+     * Remove semicolons and complex expressions
+     * Keep text under 50 characters if possible
+     * Example: "int status = POS_IO_STATUS_SUCCESS" -> P1[status = POS_IO_STATUS_SUCCESS]
+   - If type is "decision": Create a decision node with the condition only
+     * Extract just the condition, not the full if statement
+     * Example: "if (unlikely(_GetErrorCount() > 0))" -> D1{_GetErrorCount() > 0}
+   - If type is "loop": Create a loop decision node with condition only
 3. For EACH decision node, create TWO edges: one with |Yes| label, one with |No| label
 4. Ensure all decision nodes have exactly 2 outgoing edges
 5. Define each node ONLY ONCE (no duplicates)
 6. Ensure all nodes referenced in edges are defined
 7. Replace any "NEXT" placeholders with actual node IDs or E1
 8. Do NOT add Yes/No labels to Start or End node edges
-9. Generate valid Mermaid code starting with 'flowchart TD'
-10. Return ONLY the Mermaid code, no explanations, no markdown blocks
+9. Escape special characters in node text (use single quotes if needed)
+10. Split complex process steps into multiple simple process nodes
+11. Generate valid Mermaid code starting with 'flowchart TD'
+12. Return ONLY the Mermaid code, no explanations, no markdown blocks
 
 VALIDATION CHECKLIST BEFORE RETURNING:
 - [ ] Exactly one S1([Start]) defined

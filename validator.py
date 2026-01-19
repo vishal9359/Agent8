@@ -223,6 +223,40 @@ class Validator:
         if len(nodes) < 2:  # At least start and end
             errors.append("Mermaid code must contain at least 2 nodes")
         
+        # Check for syntax errors in node text
+        lines = mermaid_code.split("\n")
+        for i, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line or line.startswith("flowchart"):
+                continue
+            
+            # Check for process nodes with control flow statements
+            if re.search(r'^[A-Za-z0-9_]+\[.*(?:if\s*\(|while\s*\(|for\s*\(|switch\s*\()', line):
+                errors.append(f"Line {i}: Process node contains control flow - split into separate nodes")
+            
+            # Check for multiple statements in one node (multiple semicolons)
+            if re.search(r'^[A-Za-z0-9_]+\[.*;.*;', line):
+                errors.append(f"Line {i}: Process node contains multiple statements - split into separate nodes")
+            
+            # Check for unclosed brackets in process nodes
+            if re.search(r'^[A-Za-z0-9_]+\[', line):
+                if line.count('[') != line.count(']'):
+                    errors.append(f"Line {i}: Unclosed brackets in process node")
+            
+            # Check for unclosed braces in decision nodes
+            if re.search(r'^[A-Za-z0-9_]+\{', line):
+                if line.count('{') != line.count('}'):
+                    errors.append(f"Line {i}: Unclosed braces in decision node")
+            
+            # Check for unclosed parentheses in return/start/end nodes
+            if re.search(r'^[A-Za-z0-9_]+\(', line):
+                if line.count('(') != line.count(')'):
+                    errors.append(f"Line {i}: Unclosed parentheses in node definition")
+            
+            # Check for unescaped quotes (odd number of quotes)
+            if line.count('"') % 2 != 0:
+                errors.append(f"Line {i}: Unmatched quotes in node text")
+        
         # Check for valid arrows
         arrow_pattern = r'-->|--\|'
         arrows = re.findall(arrow_pattern, mermaid_code)
